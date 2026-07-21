@@ -1,0 +1,49 @@
+{
+  "name": "@formlm/cli",
+  "version": "0.2.0",
+  "description": "The official CLI & MCP Server for FormLM — let AI Agents build and manage your forms directly",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "formlm-cli": "bin/formlm-cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepare": "npm run build",
+    "start": "node dist/index.js",
+    "mcp": "node dist/mcp.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "keywords": [
+    "formlm",
+    "mcp",
+    "cli",
+    "ai-agent"
+  ],
+  "author": "FormLM",
+  "license": "MIT",
+  "homepage": "https://formlm.me",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/formlm/cli.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "commander": "^12.1.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

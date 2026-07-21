@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts
+*.d.ts.map
+
+# Test files (contain tokens / local URLs, never push)
+test-*.cjs
+test-*.js
+test-*.sh
+*.local.cjs
