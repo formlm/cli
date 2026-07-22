@@ -17,7 +17,7 @@ export interface ExecResult {
  * @param profileName Optional profile name override
  * @param timeoutMs   Request timeout in milliseconds.
  *                    Default: 60_000 (60s) for most commands.
- *                    Smart pipeline commands (assess smart create/modify) should use 300_000 (5min).
+ *                    Smart pipeline commands (assess smart generate) should use 300_000 (5min).
  */
 export async function execCommand(
   cmd: string,
@@ -58,6 +58,8 @@ export async function execCommand(
         } catch {
           resolve({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
         }
+        // 释放 keep-alive socket，避免事件循环挂起导致进程无法退出
+        res.destroy();
       });
     });
 
@@ -69,7 +71,7 @@ export async function execCommand(
         ? `Smart pipeline may take 60-300s (consultation can take 5min+). ` +
           `If timeout persists: 1) simplify the description (fewer dimensions/questions), ` +
           `2) use formlm_snapshot to check if partially generated, ` +
-          `3) use formlm_modify to complete partial results.`
+          `3) use formlm_exec to complete partial results.`
         : `Try again or simplify the command.`;
       resolve({
         code: 408,
@@ -120,6 +122,8 @@ export async function authLogin(email: string, password: string): Promise<ExecRe
         } catch {
           resolve({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
         }
+        // 释放 keep-alive socket，避免事件循环挂起
+        res.destroy();
       });
     });
 
@@ -166,6 +170,8 @@ export async function authMe(profileName?: string): Promise<ExecResult> {
         } catch {
           resolve({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
         }
+        // 释放 keep-alive socket，避免事件循环挂起
+        res.destroy();
       });
     });
 

@@ -155,7 +155,7 @@ PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 > **Token is optional in MCP config.** If you don't set `FORMLM_TOKEN`, the AI will prompt you to login via the `auth_login` tool — just provide your **email and password** (easiest) or token in the chat.
 >
-> **For beginners:** After installing, just tell your AI agent: "I want to create an assessment form." It will guide you through login (email + password) and then build the app for you.
+> **For beginners:** After installing, just tell your AI agent: "I want to create an assessment form." It will guide you through login (email + password) and then build the app for you. The smart generate pipeline includes visual styling, so the form will look professional out of the box.
 >
 > **After editing the config file, fully quit and restart your AI client** (not just close the window) — MCP servers are only loaded at startup.
 
@@ -175,20 +175,12 @@ Repo: https://github.com/formlm/cli
 
 ## Step 5 — Using the Smart Pipeline (v0.2.0+)
 
-The smart pipeline is the recommended way for AI agents to build and modify apps. It wraps the server-side AssessAgent/BuilderAgent — the same intelligence engine that powers the web UI.
-
-### Preview a Plan (Optional — Review Before Executing)
-
-```bash
-formlm-cli smart plan --input "Create a workplace stress assessment with 10 questions, 3 dimensions"
-```
-
-Returns the task list for review — no execution. After reviewing, run `smart create` with the same input to execute.
+The smart pipeline is the recommended way for AI agents to build apps. It wraps the server-side AssessAgent — the same intelligence engine that powers the web UI.
 
 ### Generate a New App
 
 ```bash
-formlm-cli smart create --input "Create a workplace stress assessment with 10 questions, 3 dimensions, and detailed score interpretations"
+formlm-cli smart generate --input "Create a workplace stress assessment with 10 questions, 3 dimensions, and detailed score interpretations"
 ```
 
 Optional parameters:
@@ -196,17 +188,10 @@ Optional parameters:
 - `--style`: Visual style (Noir, Minimal, Warm, etc.)
 - `--question-count`: Range like 10-15, 15-20, 20-30
 
-### Modify an Existing App
-
-```bash
-formlm-cli smart modify --app <appId> --input "Add a new dimension for workplace social support"
-```
-
 ### How It Works
 
 1. **Plan**: The server-side AssessAgent generates a task plan from your natural language input
 2. **Execute**: Each task streams CLI commands via AI, executes them, and collects results
-3. **Reflect** (modify only): The BuilderAgent validates changes and provides a summary
 
 The smart pipeline automatically:
 - Loads SKILL.md domain knowledge for each task
@@ -267,6 +252,20 @@ formlm-cli report widget add --app <appId> --page <pageId> --type chart --chartT
 formlm-cli report widget set --app <appId> --id <widgetId> --value "{{TotalScore}} / {{ScaleTotal}}"
 ```
 
+### Beautify Your Form (Mandatory for Direct Commands)
+
+When using Direct Commands (instead of `smart generate`), the form will use the **default unstyled appearance**.
+To apply a professional AI-generated visual style, run this after creating your form:
+
+```bash
+# Apply AI-generated style to ALL pages (takes 30-120s, do NOT cancel)
+formlm-cli connect style apply-all --app <appId> --look "职场压力评估，深蓝专业风格" --theme minimalist
+```
+
+Available design modes (`--theme`): `scenic`, `skeuomorphic`, `liquid`, `glassmorphism`, `immersive`, `minimalist`
+
+The `--look` parameter should describe both the **scenario** and **visual style** (e.g. "心理健康评估，温暖治愈风格" / "deep blue tech, frosted glass cards").
+
 ### Expert Commands
 
 ```bash
@@ -304,16 +303,13 @@ formlm-cli --profile staging app list
 
 ## MCP Architecture (v0.2.0)
 
-### 9 Tools (Layered)
+### 6 Tools (Layered)
 
 | Tier | Tool | When to Use |
 |---|---|---|
 | 0 | `auth_login` | Start of session — authenticate |
 | 0 | `auth_status` | Check if still logged in |
-| 1 | `formlm_plan` | Preview plan before executing (optional, for user review) |
-| 1 | `formlm_create` | Build a complete new app from scratch |
-| 1 | `formlm_modify` | Modify an existing app with natural language |
-| 1 | `formlm_confirm` | Confirm and execute a medium/high risk plan returned by `formlm_modify` — no web UI needed |
+| 1 | `formlm_generate` | Build a complete new app from scratch |
 | 2 | `formlm_snapshot` | Before making changes — understand current state |
 | 2 | `formlm_skill` | Before constructing commands — read domain rules |
 | 3 | `formlm_exec` | Direct command execution (scale/report/expert/etc.) |
@@ -334,11 +330,10 @@ AI agents can read these MCP resources to understand P0/P1/P2 constraints:
 ### Recommended Workflow for AI Agents
 
 1. `auth_login` → Get authenticated
-2. `formlm_plan` → (Optional) Preview the plan before executing
-3. `formlm_create` → Generate a complete app (recommended)
-4. `formlm_snapshot` → Check the current state
-5. `formlm_modify` → Make changes (recommended) or `formlm_exec` for fine-grained control
-6. If `formlm_modify` returns a plan preview (medium/high risk), show the plan to the user and, once confirmed, call `formlm_confirm` with the exact same plan — entirely via chat, no web UI needed
+2. `formlm_generate` → Generate a complete app (recommended)
+3. `formlm_snapshot` → Check the current state
+4. `formlm_exec` → Make changes with fine-grained control
+5. If using Direct Commands instead of `formlm_generate`, run `connect style apply-all` to beautify the form (see Step 7 above)
 
 ---
 
@@ -350,8 +345,7 @@ AI agents can read these MCP resources to understand P0/P1/P2 constraints:
 | `❌ [401] Not authenticated` | Run `formlm-cli auth login` or set `FORMLM_TOKEN` environment variable |
 | `❌ [403] Command '...' is not allowed via MCP` | That command is not in the MCP whitelist — only whitelisted commands are permitted |
 | Token not working | Tokens may expire. Get a fresh token from [formlm.me](https://formlm.me) DevTools |
-| `smart create` takes long | The smart pipeline runs AI plan + execute — expect 30-120 seconds for full generation |
-| `smart modify` shows "Plan Preview" | Medium/high-risk changes require confirmation. Show the returned plan to the user, then call `formlm_confirm` (MCP) or `assess smart confirm --plan-json ...` (CLI) with the exact plan to execute — no web UI needed. |
+| `smart generate` takes long | The smart pipeline runs AI plan + execute — expect 60-120s for assessment, 180-300s for consultation. Do NOT cancel — it needs time to generate form, scale, report, and visual styling |
 
 ---
 

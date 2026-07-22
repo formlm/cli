@@ -2,6 +2,12 @@ import { Command } from 'commander';
 import { execCommand } from '../exec.js';
 import { output } from '../output.js';
 
+// ── Timeouts ──────────────────────────────────────────────────────────────────
+// connect style apply/apply-all triggers server-side AI style generation (30-120s),
+// so they need a longer timeout than regular CLI commands.
+const TIMEOUT_DEFAULT = 60_000;   // 60s for query/find/set/move (non-AI commands)
+const TIMEOUT_STYLE   = 600_000;  // 10min for style apply/apply-all (AI-generated styles)
+
 // Normalize commander optional boolean flags to true/false/undefined
 function normBool(v: unknown): boolean | undefined {
   if (v === undefined) return undefined;
@@ -447,7 +453,7 @@ export function registerConnectCommand(parent: Command): void {
       if (opts.type) cmd += ` --type ${opts.type}`;
       if (opts.pageId) cmd += ` --page-id ${opts.pageId}`;
       cmd += ' --json';
-      const result = await execCommand(cmd);
+      const result = await execCommand(cmd, undefined, TIMEOUT_STYLE);
       output(result);
     });
 
@@ -464,7 +470,7 @@ export function registerConnectCommand(parent: Command): void {
       if (opts.look) cmd += ` --look "${opts.look}"`;
       if (opts.layout) cmd += ` --layout ${opts.layout}`;
       cmd += ' --json';
-      const result = await execCommand(cmd);
+      const result = await execCommand(cmd, undefined, TIMEOUT_STYLE);
       output(result);
     });
 

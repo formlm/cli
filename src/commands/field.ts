@@ -2,6 +2,14 @@ import { Command } from 'commander';
 import { execCommand } from '../exec.js';
 import { output } from '../output.js';
 
+// Validate field ID: only alphanumeric + underscore (snake_case), no spaces or special chars
+function validateFieldId(id: string): void {
+  if (!/^[a-zA-Z0-9_]+$/.test(id)) {
+    console.error(`❌ Invalid field ID: "${id}". ID must be alphanumeric + underscore (snake_case), e.g. q1_anxiety.`);
+    process.exit(1);
+  }
+}
+
 // 将 commander 可选值布尔选项规范化为 true/false/undefined：
 // --flag        → opts.flag === true
 // --flag=false  → opts.flag === 'false'（字符串）
@@ -80,6 +88,7 @@ export function registerFieldCommand(parent: Command): void {
     .option('--unique [value]', 'Unique value validation (true/false)')
     .option('--shareable [value]', 'Visible on share page (true/false)')
     .action(async (opts) => {
+      validateFieldId(opts.id);
       let cmd = `assess form add --app ${opts.app} --id ${opts.id} --type ${opts.type}`;
       if (opts.title) cmd += ` --title "${opts.title}"`;
       if (opts.name) cmd += ` --name "${opts.name}"`;

@@ -10,7 +10,8 @@ import { output } from '../output.js';
  * newapp.html's "reference data injection" step — it gives the AI agent full context
  * about the current app state before generating modification commands.
  *
- * For each module, the query uses --md (markdown) format for token efficiency.
+ * By default, all modules use --json for consistent structured output.
+ * Use --md to switch to markdown format (token-efficient for AI consumption).
  */
 export function registerSnapshotCommand(parent: Command): void {
   parent
@@ -18,18 +19,21 @@ export function registerSnapshotCommand(parent: Command): void {
     .description('Get aggregated snapshot of ALL app modules (form + scale + connect + report + expert + share) — one call, full context')
     .requiredOption('--app <appId>', 'App ID')
     .option('--module <name>', 'Get only a specific module: form / scale / connect / report / expert / share (default: all)')
+    .option('--md', 'Output all modules in Markdown format (token-efficient for AI, default: JSON)')
     .action(async (opts) => {
       const modules = opts.module
         ? [opts.module]
         : ['form', 'scale', 'connect', 'report', 'expert', 'share'];
 
+      const format = opts.md ? '--md' : '--json';
+
       const commands: Record<string, string> = {
-        form: `assess form query --app ${opts.app} --json`,
-        scale: `assess scale query --app ${opts.app} --md`,
-        connect: `assess connect query --app ${opts.app} --md`,
-        report: `assess report query --app ${opts.app} --md`,
-        expert: `assess expert query --app ${opts.app} --md`,
-        share: `assess share query --app ${opts.app} --json`,
+        form: `assess form query --app ${opts.app} ${format}`,
+        scale: `assess scale query --app ${opts.app} ${format}`,
+        connect: `assess connect query --app ${opts.app} ${format}`,
+        report: `assess report query --app ${opts.app} ${format}`,
+        expert: `assess expert query --app ${opts.app} ${format}`,
+        share: `assess share query --app ${opts.app} ${format}`,
       };
 
       // Execute requested modules in parallel
@@ -43,13 +47,10 @@ export function registerSnapshotCommand(parent: Command): void {
 
       for (const [module, result] of results) {
         if (result.code === 0) {
-          // Try to parse as JSON for structured modules, keep raw text for md modules
-          if (module === 'form' || module === 'share') {
-            try {
-              snapshot[module] = JSON.parse(result.data);
-            } catch {
-              snapshot[module] = result.data || result.message;
-            }
+          // In JSON mode, parse uniformly; in md mode, keep raw text
+          if (!opts.md) {
+            try { snapshot[module] = JSON.parse(result.data); }
+            catch { snapshot[module] = result.data || result.message; }
           } else {
             snapshot[module] = result.data || result.message;
           }

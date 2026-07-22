@@ -22,6 +22,18 @@ export function registerAppCommand(parent: Command): void {
       const cmd = `assess app create --name "${opts.name}"${opts.description ? ` --description "${opts.description}"` : ''} --json`;
       const result = await execCommand(cmd);
       output(result);
+      if (result.code === 0) {
+        // Extract appId from result for tips
+        let appId = '';
+        try { appId = JSON.parse(result.data).id || ''; } catch {}
+        if (appId) {
+          console.log('');
+          console.log('💡 Next steps:');
+          console.log(`   Get URLs:    formlm-cli app urls --app ${appId}`);
+          console.log(`   Beautify:    formlm-cli connect style apply-all --app ${appId} --look "描述你的场景和视觉风格"`);
+          console.log(`   Add fields:  formlm-cli field add --app ${appId} --id q1 --name "Question 1" --type radio`);
+        }
+      }
     });
 
   app
@@ -46,6 +58,16 @@ export function registerAppCommand(parent: Command): void {
       if (opts.description) cmd += ` --description "${opts.description}"`;
       if (opts.theme) cmd += ` --theme ${opts.theme}`;
       cmd += ' --json';
+      const result = await execCommand(cmd);
+      output(result);
+    });
+
+  app
+    .command('urls')
+    .description('Get all app URLs (fill-in, editor, data management)')
+    .requiredOption('--app <appId>', 'App ID')
+    .action(async (opts) => {
+      const cmd = `assess app urls --app ${opts.app} --json`;
       const result = await execCommand(cmd);
       output(result);
     });

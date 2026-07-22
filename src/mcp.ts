@@ -22,12 +22,12 @@ function toText(r: { code: number; message: string; data: any }): string {
   return r.code === 0 ? (r.data || r.message) : `❌ [${r.code}] ${r.message}`;
 }
 
-// ── Helper: format formlm_create result for better AI consumption ──────────────
+// ── Helper: format formlm_generate result for better AI consumption ────────────
 // Extracts key fields (appId, shareUrl, planType, taskCount) from JSON result
 // and presents them in a structured summary for the AI Agent to relay to the user.
 // The full raw JSON is intentionally NOT dumped here (it can be very long for
 // multi-task pipelines) — use formlm_snapshot if full detail is needed.
-function formatCreateResult(r: { code: number; message: string; data: any }): string {
+function formatGenerateResult(r: { code: number; message: string; data: any }): string {
   if (r.code !== 0) {
     return `❌ [${r.code}] ${r.message}`;
   }
@@ -73,57 +73,12 @@ function formatCreateResult(r: { code: number; message: string; data: any }): st
   return raw;
 }
 
-// ── Helper: format formlm_modify result, surfacing plan-preview payloads ──────
-// When a medium/high risk change is detected server-side, execution pauses and
-// returns { planPreview: true, riskLevel, plan }. This formats that into a
-// human-reviewable task list and tells the AI exactly how to proceed (call
-// formlm_confirm with the SAME plan object) — no web UI needed.
-function formatModifyResult(r: { code: number; message: string; data: any }): string {
-  if (r.code !== 0) {
-    return `❌ [${r.code}] ${r.message}`;
-  }
-  const raw = r.data || r.message;
-  if (typeof raw !== 'string') {
-    return String(raw);
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && parsed.planPreview === true && parsed.plan) {
-      const lines: string[] = [];
-      lines.push(`⏸️  Plan Preview — Confirmation Required (risk level: ${parsed.riskLevel || parsed.plan.riskLevel || 'unknown'})`);
-      lines.push('');
-      lines.push('This change was classified as medium/high risk and was NOT executed yet.');
-      lines.push('Show this task list to the user and ask for explicit confirmation before proceeding:');
-      lines.push('');
-      const tasks = Array.isArray(parsed.plan.tasks) ? parsed.plan.tasks : [];
-      for (const t of tasks) {
-        lines.push(`  ${t.seq}. [${t.skill}] ${t.title}`);
-      }
-      lines.push('');
-      lines.push(`If the user confirms, call formlm_confirm with appId="${parsed.appId || ''}" and plan=<the exact JSON below, unmodified>:`);
-      lines.push('');
-      lines.push(JSON.stringify(parsed.plan));
-      return lines.join('\n');
-    }
-    if (parsed && typeof parsed === 'object' && parsed.status) {
-      const lines: string[] = [];
-      lines.push(parsed.status === 'partial_error' ? '⚠️ Partial Success' : '✅ Success');
-      if (parsed.appId) lines.push(`📋 App ID: ${parsed.appId}`);
-      if (parsed.operationType) lines.push(`🔧 Operation: ${parsed.operationType}`);
-      if (parsed.output) { lines.push(''); lines.push(parsed.output); }
-      return lines.join('\n');
-    }
-  } catch {
-    // Not JSON, return as-is
-  }
-  return raw;
-}
-
 // ── MCP timeouts ─────────────────────────────────────────────────────────────
 // Most commands complete in < 5 seconds.
-// Smart pipeline (AssessAgent/BuilderAgent) takes 30-300 seconds.
+// Smart pipeline (AssessAgent) takes 30-300 seconds.
 const TIMEOUT_DEFAULT  = 60_000;   // 60s for all direct CLI commands
-const TIMEOUT_SMART    = 600_000;  // 10min for formlm_create / formlm_modify (consultation can take 5min+)
+const TIMEOUT_SMART    = 600_000;  // 10min for formlm_generate (consultation can take 5min+)
+const TIMEOUT_STYLE    = 600_000;  // 10min for connect style apply/apply-all (AI-generated styles can take 60-120s)
 
 export async function startMcpServer(): Promise<void> {
   const server = new McpServer({
@@ -171,15 +126,14 @@ export async function startMcpServer(): Promise<void> {
   }
 
   // ════════════════════════════════════════════════════════════════
-  //  MCP TOOLS — Layered Architecture (9 tools, down from 34)
+  //  MCP TOOLS — Layered Architecture (6 tools, down from 34)
   //
   //  Recommended workflow:
   //    1. auth_login → authenticate
-  //    2. formlm_create → build a complete new app from scratch, OR
+  //    2. formlm_generate → build a complete new app from scratch, OR
   //       formlm_skill (read domain rules) + formlm_exec (direct commands)
-  //    3. formlm_snapshot → check current state before any modifications
-  //    4. formlm_modify → modify existing app with natural language, OR
-  //       formlm_exec (direct fine-grained commands)
+  //    3. formlm_snapshot → check current state
+  //    4. formlm_exec → direct fine-grained commands for modifications
   // ════════════════════════════════════════════════════════════════
 
   // ── Tier 0: Authentication ────────────────────────────────────
@@ -188,7 +142,7 @@ export async function startMcpServer(): Promise<void> {
     [
       'Login to FormLM with a token or email + password.',
       '',
-      'IMPORTANT: At the START of any FormLM session (before calling formlm_create/formlm_plan/formlm_modify/formlm_exec),',
+      'IMPORTANT: At the START of any FormLM session (before calling formlm_generate/formlm_exec),',
       'call auth_status first. If not logged in, call this tool immediately — ask the user for their email + password',
       '(easiest, no browser needed) or a token. Do NOT wait for a 401 error before authenticating.',
     ].join('\n'), {
@@ -232,14 +186,14 @@ export async function startMcpServer(): Promise<void> {
 
   // ── Tier 1: Smart Pipeline (Natural Language → Full App) ────────
   //
-  // These tools wrap the server-side AssessAgent / BuilderAgent intelligence.
-  // They are the RECOMMENDED entry points for AI agents:
+  // This tool wraps the server-side AssessAgent intelligence.
+  // It is the RECOMMENDED entry point for AI agents:
   //   - Same engine that powers newapp.html (SKILL.md constraints, reference data injection, retry)
   //   - One call replaces 30+ sequential formlm_exec calls
   //   - Returns appId + full task execution log
   //   - WARNING: may take 60-300 seconds for complex apps (consultation: 6 tasks)
 
-  server.tool('formlm_create',
+  server.tool('formlm_generate',
     [
       'Create a COMPLETE production-ready assessment app from natural language.',
       'Server runs: Plan AI (assess-plan.md) → per-task SKILL.md injection → CLI execution → result collection.',
@@ -268,7 +222,7 @@ export async function startMcpServer(): Promise<void> {
       '',
       '## ON FAILURE:',
       '- If timeout: ask user to simplify the description (fewer dimensions, fewer questions).',
-      '- If partial success: use formlm_snapshot to check what was generated, then formlm_modify to complete.',
+      '- If partial success: use formlm_snapshot to check what was generated, then use formlm_exec to complete.',
       '- Always offer to retry with a simplified description.',
       '',
       '## Reference Documents:',
@@ -306,97 +260,13 @@ export async function startMcpServer(): Promise<void> {
       '"20-30" (deep assessment, 8-15 min). Default: auto-decided by AI based on planType.'
     ),
   }, async (params) => {
-    let cmd = `assess smart create --input "${escapeArg(params.input)}"`;
+    let cmd = `assess smart generate --input "${escapeArg(params.input)}"`;
     if (params.planType) cmd += ` --plan-type ${params.planType}`;
     if (params.style)    cmd += ` --style "${escapeArg(params.style)}"`;
     if (params.questionCount) cmd += ` --question-count ${params.questionCount}`;
     cmd += ' --json';
     const r = await execCommand(cmd, undefined, TIMEOUT_SMART);
-    const text = formatCreateResult(r);
-    return { content: [{ type: 'text' as const, text }] };
-  });
-
-  server.tool('formlm_plan',
-    [
-      'Preview the execution plan WITHOUT executing it.',
-      'Server runs: Plan AI (assess-plan.md) only — returns the task list for user review.',
-      'Equivalent to newapp.html review stage. Use this BEFORE formlm_create when the user wants to review the plan first.',
-      '',
-      'WORKFLOW: formlm_plan → user reviews tasks → formlm_create (with same input to execute)',
-      '',
-      'Takes 10-30 seconds (only the Plan phase, no execution).',
-    ].join('\n'), {
-    input: z.string().describe('Same natural language description you would pass to formlm_create'),
-    planType: z.string().optional().describe('Same as formlm_create planType parameter'),
-    style: z.string().optional().describe('Same as formlm_create style parameter'),
-    questionCount: z.string().optional().describe('Same as formlm_create questionCount parameter'),
-  }, async (params) => {
-    let cmd = `assess smart plan --input "${escapeArg(params.input)}"`;
-    if (params.planType) cmd += ` --plan-type ${params.planType}`;
-    if (params.style)    cmd += ` --style "${escapeArg(params.style)}"`;
-    if (params.questionCount) cmd += ` --question-count ${params.questionCount}`;
-    cmd += ' --json';
-    const r = await execCommand(cmd, undefined, TIMEOUT_DEFAULT);
-    return { content: [{ type: 'text' as const, text: toText(r) }] };
-  });
-
-  server.tool('formlm_modify',
-    [
-      'Modify an EXISTING app using natural language.',
-      'Server runs: Think (query current state → analyze intent) → Plan (PATCH task list with risk assessment) → Execute (SKILL.md constraints + reference injection) → Reflect (validate results).',
-      'Equivalent to newapp.html\'s modification chat. Returns JSON with operationType, task statuses, and AI reflection summary.',
-      '',
-      'BEFORE calling: use formlm_snapshot to understand current state.',
-      'AFTER calling: use formlm_snapshot to verify changes.',
-      '',
-      'MEDIUM/HIGH risk changes (5+ tasks, or form→scale cascades, or question/dimension deletion) are NOT executed immediately.',
-      'Instead the response has planPreview=true and a full "plan" object (task list + riskLevel).',
-      'When this happens:',
-      '  1. Show the task list and riskLevel to the user in plain language.',
-      '  2. Ask for explicit confirmation ("Should I proceed with these N changes?").',
-      '  3. If the user confirms, call formlm_confirm with the SAME appId and the exact "plan" object (unmodified) to execute it.',
-      '  4. If the user declines or wants changes, do NOT call formlm_confirm — just call formlm_modify again with a revised input.',
-      'This entire flow works purely through chat — no web UI is required at any step.',
-      '',
-      'Common use cases:',
-      '- "Add a social support subscale with 5 questions"',
-      '- "Change the cover page to dark blue with a professional theme"',
-      '- "Update the expert agent to use a warmer communication style"',
-      '- "Add a new report page showing dimension comparison"',
-      '',
-      'WARNING: Takes 30-120 seconds. Do NOT cancel — let it complete.',
-    ].join('\n'), {
-    appId: z.string().describe('App ID to modify (get it from app list or previous formlm_create result)'),
-    input: z.string().describe(
-      'Natural language description of the change. Be specific about WHAT to change. ' +
-      'Examples: "Add a social support subscale with 5 questions" / ' +
-      '"Change the cover page to dark blue with a professional theme" / ' +
-      '"Update the expert agent to use a warmer communication style"'
-    ),
-  }, async (params) => {
-    const cmd = `assess smart modify --app ${params.appId} --input "${escapeArg(params.input)}" --json`;
-    const r = await execCommand(cmd, undefined, TIMEOUT_SMART);
-    const text = formatModifyResult(r);
-    return { content: [{ type: 'text' as const, text }] };
-  });
-
-  server.tool('formlm_confirm',
-    [
-      'Confirm and execute a MEDIUM/HIGH risk change plan that was previously returned by formlm_modify with planPreview=true.',
-      'Server runs: Execute (skip Think/Plan) → Reflect, using the exact plan you pass in.',
-      'This lets the user approve risky changes entirely through chat — no web UI needed.',
-      '',
-      'ONLY call this after the user has seen the task list from formlm_modify\'s planPreview response and explicitly confirmed.',
-      'The "plan" argument MUST be the exact JSON object formlm_modify returned (do not edit, reformat, or hand-write it).',
-      '',
-      'WARNING: Takes 30-120 seconds. Do NOT cancel — let it complete.',
-    ].join('\n'), {
-    appId: z.string().describe('App ID (same as passed to the preceding formlm_modify call)'),
-    plan: z.string().describe('The exact "plan" JSON object returned by formlm_modify, passed through unmodified as a JSON string'),
-  }, async (params) => {
-    const cmd = `assess smart confirm --app ${params.appId} --plan-json "${escapeArg(params.plan)}" --json`;
-    const r = await execCommand(cmd, undefined, TIMEOUT_SMART);
-    const text = formatModifyResult(r);
+    const text = formatGenerateResult(r);
     return { content: [{ type: 'text' as const, text }] };
   });
 
@@ -407,8 +277,8 @@ export async function startMcpServer(): Promise<void> {
       'Get aggregated snapshot of ALL 6 app modules in a single call.',
       'Returns: form fields, scale dimensions+ranges, connect page styles, report pages+widgets, expert config, share status.',
       '',
-      'Call this BEFORE formlm_modify to understand what already exists.',
-      'Call this AFTER formlm_create to verify the generated app.',
+      'Call this BEFORE making changes to understand what already exists.',
+      'Call this AFTER formlm_generate to verify the generated app.',
     ].join('\n'), {
     appId: z.string().describe('App ID'),
     module: z.string().optional().describe('Get only one module: form / scale / connect / report / expert / share (default: all 6)'),
@@ -416,10 +286,10 @@ export async function startMcpServer(): Promise<void> {
     const modules = params.module ? [params.module] : ['form', 'scale', 'connect', 'report', 'expert', 'share'];
     const commands: Record<string, string> = {
       form:    `assess form query --app ${params.appId} --json`,
-      scale:   `assess scale query --app ${params.appId} --md`,
-      connect: `assess connect query --app ${params.appId} --md`,
-      report:  `assess report query --app ${params.appId} --md`,
-      expert:  `assess expert query --app ${params.appId} --md`,
+      scale:   `assess scale query --app ${params.appId} --json`,
+      connect: `assess connect query --app ${params.appId} --json`,
+      report:  `assess report query --app ${params.appId} --json`,
+      expert:  `assess expert query --app ${params.appId} --json`,
       share:   `assess share query --app ${params.appId} --json`,
     };
 
@@ -433,12 +303,9 @@ export async function startMcpServer(): Promise<void> {
 
     for (const [module, result] of results) {
       if (result.code === 0) {
-        if (module === 'form' || module === 'share') {
-          try { snapshot[module] = JSON.parse(result.data); }
-          catch { snapshot[module] = result.data || result.message; }
-        } else {
-          snapshot[module] = result.data || result.message;
-        }
+        // All modules now use --json, so parse uniformly
+        try { snapshot[module] = JSON.parse(result.data); }
+        catch { snapshot[module] = result.data || result.message; }
       } else {
         snapshot[module] = null;
         errors.push(`${module}: ${result.message}`);
@@ -453,7 +320,7 @@ export async function startMcpServer(): Promise<void> {
   server.tool('formlm_skill',
     [
       'Get the full SKILL.md domain knowledge for a specific skill module.',
-      'Same documents that AssessAgent/BuilderAgent loads internally — contains P0/P1/P2 constraints, parameter rules, examples.',
+      'Same documents that AssessAgent loads internally — contains P0/P1/P2 constraints, parameter rules, examples.',
       '',
       'You can also read these via MCP resources: formlm://skills/<skillId>',
       'READ the relevant skill BEFORE constructing formlm_exec commands manually.',
@@ -478,13 +345,13 @@ export async function startMcpServer(): Promise<void> {
   //   assess report : query / find / update / page / widget / logic
   //   assess expert : query / find / config / set / avatar / remove / chat
   //   assess share  : set / query / url
-  //   assess smart  : create / modify / plan / confirm
+  //   assess smart  : generate
   //   assess skill  : form / scale / connect / report / expert / share
 
   server.tool('formlm_exec',
     [
       'Execute a raw FormLM CLI command directly.',
-      'Use this for fine-grained control that formlm_create/formlm_modify don\'t cover.',
+      'Use this for fine-grained control that formlm_generate doesn\'t cover, or for modifying existing apps.',
       '',
       'IMPORTANT: All commands must start with "assess". Read formlm_skill first to ensure P0 compliance.',
       '',
@@ -513,6 +380,7 @@ export async function startMcpServer(): Promise<void> {
       '  "assess scale data add --app <id> --scale stress --ranges \\"0-7:Normal,8-14:Mild,15-21:Severe\\" --json"',
       '  "assess share set --app <id> --form-type all --form-perm 1 --form-day 3650000 --json"',
       '  "assess share url --app <id>"',
+      '  "assess connect style apply-all --app <id> --look \"心理健康评估，温暖治愈风格\" --theme minimalist --json"  (AI style, takes 30-120s)',
       '  "assess app remove --app <id> --json"                                                        (IRREVERSIBLE — confirm first, see SAFETY above)',
     ].join('\n'), {
     command: z.string().describe(
@@ -520,7 +388,10 @@ export async function startMcpServer(): Promise<void> {
       'Add --json flag for structured output. Escape inner quotes with \\".'
     ),
   }, async (params) => {
-    const r = await execCommand(params.command, undefined, TIMEOUT_DEFAULT);
+    // Use longer timeout for commands that trigger server-side AI generation
+    const isStyleCmd = params.command.includes('connect style apply');
+    const timeout = isStyleCmd ? TIMEOUT_STYLE : TIMEOUT_DEFAULT;
+    const r = await execCommand(params.command, undefined, timeout);
     return { content: [{ type: 'text' as const, text: toText(r) }] };
   });
 
@@ -528,5 +399,5 @@ export async function startMcpServer(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('FormLM MCP Server v0.2.0 running on stdio (9 tools + 6 resources)');
+  console.error('FormLM MCP Server v0.2.0 running on stdio (6 tools + 6 resources)');
 }

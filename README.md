@@ -20,13 +20,21 @@ With `formlm-cli`, you can control FormLM directly from your terminal or plug it
 
 ---
 
+## What's New in v0.2.1
+
+- **Field ID validation**: `field add --id` now enforces snake_case regex (`^[a-zA-Z0-9_]+$`)
+- **Snapshot `--md` flag**: Unified JSON output by default, with optional `--md` for markdown format
+- **Error handler**: Missing required options now print usage hints instead of bare error messages
+- **Server-side fixes**: SessionContext appId sync, ScaleCommand B5 reversal removal, CLI --app extraction
+
+---
+
 ## What's New in v0.2.0
 
 The MCP architecture has been completely redesigned from the ground up:
 
-- **34 flat tools → 9 layered tools + 6 knowledge resources**
-- **Intelligence Layer**: `formlm_create` / `formlm_modify` wrap the server-side AssessAgent/BuilderAgent pipeline
-- **Chat-only Risk Confirmation**: `formlm_confirm` executes medium/high-risk `formlm_modify` plans after user approval — no web UI needed
+- **34 flat tools → 6 layered tools + 6 knowledge resources**
+- **Intelligence Layer**: `formlm_generate` wraps the server-side AssessAgent pipeline
 - **Domain Knowledge**: 6 MCP resources expose SKILL.md files directly to AI agents
 - **State Awareness**: `formlm_snapshot` aggregates all module states in one call
 - **P0 Constraints**: Embedded directly in command descriptions — AI sees them every time
@@ -39,8 +47,7 @@ The MCP architecture has been completely redesigned from the ground up:
 │           Codex CLI / Windsurf / Cline / ...)             │
 ├─────────────────────────────────────────────────────────┤
 │  Tier 0: auth_login, auth_status                         │
-│  Tier 1: formlm_plan, formlm_create,                     │
-│          formlm_modify, formlm_confirm ← Smart Pipeline  │
+│  Tier 1: formlm_generate                   ← Smart Pipeline │
 │  Tier 2: formlm_snapshot, formlm_skill ← State + Knowledge│
 │  Tier 3: formlm_exec                    ← Direct Commands │
 ├─────────────────────────────────────────────────────────┤
@@ -85,25 +92,35 @@ formlm-cli auth login --token <your-token>
 ### 2. Smart Pipeline (AI-recommended)
 
 ```bash
-# Preview the plan before executing (optional, for user review)
-formlm-cli smart plan --input "Create a workplace stress assessment with 10 questions, 3 dimensions"
-
 # Generate a complete assessment app from natural language
-formlm-cli smart create --input "Create a workplace stress assessment with 10 questions, 3 dimensions, and detailed score interpretations"
-
-# Modify an existing app
-formlm-cli smart modify --app <appId> --input "Add a new dimension for workplace social support"
-
-# If the change is medium/high risk, smart modify returns a plan preview instead of executing.
-# Show the plan to the user, then confirm and execute it (no web UI needed):
-formlm-cli smart confirm --app <appId> --plan-json '<the exact "plan" JSON returned above>'
+# This includes form design, scale config, report pages, AND visual styling — all in one step.
+# Expected time: 60-120s for assessment, 180-300s for consultation. Do NOT cancel.
+formlm-cli smart generate --input "Create a workplace stress assessment with 10 questions, 3 dimensions, and detailed score interpretations"
 ```
 
-### 3. Direct Commands (for fine-grained control)
+> **⚠️ Smart generate already includes visual styling.** If you skip smart generate and use Direct Commands (below) instead, you MUST run `connect style apply-all` to beautify your form — otherwise it will use the default unstyled appearance.
+
+### 3. Get All App URLs (after creating)
+
+```bash
+# Get fill-in, editor, and data management URLs in one call
+formlm-cli app urls --app <appId>
+# Returns: shareUrl (fill-in), builderUrl (editor), dataUrl (data management)
+```
+
+### 4. Beautify Your Form (if using Direct Commands)
+
+```bash
+# Apply AI-generated visual style to all pages (takes 30-120s)
+formlm-cli connect style apply-all --app <appId> --look "职场压力评估，深蓝专业风格" --theme minimalist
+```
+
+### 5. Direct Commands (for fine-grained control)
 
 ```bash
 # Get a snapshot of all module states
 formlm-cli snapshot --app <appId>
+formlm-cli snapshot --app <appId> --md              # Markdown format (token-efficient for AI)
 
 # Read a skill document before constructing commands
 formlm-cli skill form
@@ -125,13 +142,13 @@ formlm-cli expert query --app <appId>
 formlm-cli expert config --app <appId> --enableChat true
 ```
 
-### 4. Use as MCP Server
+### 6. Use as MCP Server
 
 ```bash
 formlm-cli mcp
 ```
 
-This starts the MCP Server (stdio transport) with 9 tools + 6 resources, ready for AI Agents to connect.
+This starts the MCP Server (stdio transport) with 6 tools + 6 resources, ready for AI Agents to connect.
 
 ---
 
@@ -141,21 +158,16 @@ This starts the MCP Server (stdio transport) with 9 tools + 6 resources, ready f
 
 ```bash
 # Generate a complete app from natural language
-formlm-cli smart create --input "..." [--plan-type assessment] [--style "温暖亲切"] [--question-count 10-15]
-
-# Modify an existing app
-formlm-cli smart modify --app <appId> --input "..."
-
-# Confirm and execute a medium/high risk plan returned by smart modify (skips Think/Plan, no web UI needed)
-formlm-cli smart confirm --app <appId> --plan-json '<exact plan JSON from smart modify>'
+formlm-cli smart generate --input "..." [--plan-type assessment] [--style "温暖亲切"] [--question-count 10-15]
 ```
 
 ### Snapshot
 
 ```bash
-# Get all module states in one call
+# Get all module states in one call (JSON by default)
 formlm-cli snapshot --app <appId>
 formlm-cli snapshot --app <appId> --module scale    # Only scale module
+formlm-cli snapshot --app <appId> --md             # Markdown format (token-efficient for AI)
 ```
 
 ### Skill Documents
@@ -330,16 +342,13 @@ FormLM CLI works as a standard MCP Server over stdio and plugs into **any MCP-co
 
 ---
 
-## Available MCP Tools (9)
+## Available MCP Tools (6)
 
 | Tier | Tool | Description |
 |---|---|---|
 | 0 | `auth_login` | Login with token or email + password |
 | 0 | `auth_status` | Check current login status |
-| 1 | `formlm_plan` | Preview execution plan without executing (for user review before create) |
-| 1 | `formlm_create` | Generate a complete app from natural language (AssessAgent pipeline) |
-| 1 | `formlm_modify` | Modify an existing app via natural language (BuilderAgent pipeline) |
-| 1 | `formlm_confirm` | Confirm and execute a medium/high risk plan returned by `formlm_modify` — no web UI needed |
+| 1 | `formlm_generate` | Generate a complete app from natural language (AssessAgent pipeline) |
 | 2 | `formlm_snapshot` | Get aggregated state of all modules (form/scale/connect/report/expert/share) |
 | 2 | `formlm_skill` | Fetch SKILL.md domain knowledge for a skill module |
 | 3 | `formlm_exec` | Execute any whitelisted CLI command directly |
