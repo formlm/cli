@@ -15,7 +15,7 @@ function toText(r: { code: number; message: string; data: any }): string {
 }
 
 // ── Helper: format formlm_generate (smart plan) result for AI consumption ──────
-// Extracts key fields (appId, planType, tasks) from plan result
+// Extracts key fields (appId, planType, name, tasks) from plan result
 // and presents them with next-step guidance for sequential module execution.
 function formatGenerateResult(r: { code: number; message: string; data: any }): string {
   if (r.code !== 0) {
@@ -32,6 +32,7 @@ function formatGenerateResult(r: { code: number; message: string; data: any }): 
       lines.push('✅ Plan generated successfully');
       lines.push(`📋 App ID: ${parsed.appId}`);
       if (parsed.planType) lines.push(`🎯 Type: ${parsed.planType}`);
+      if (parsed.name) lines.push(`📛 Name: ${parsed.name}`);
       if (parsed.description) lines.push(`📝 Description: ${parsed.description}`);
       if (parsed.taskCount != null) lines.push(`📊 Tasks: ${parsed.taskCount}`);
       if (parsed.tasks && Array.isArray(parsed.tasks)) {
@@ -41,12 +42,9 @@ function formatGenerateResult(r: { code: number; message: string; data: any }): 
           lines.push(`  ${t.seq}. [${t.skill}] ${t.title}`);
         }
         lines.push('');
-        lines.push('📋 Plan JSON (pass this to each smart execute call):');
-        lines.push(parsed.plan || '');
-        lines.push('');
-        lines.push('Next: Use formlm_execute to execute each module sequentially:');
+        lines.push('Next: Use formlm_execute to execute each module sequentially (plan is cached server-side):');
         for (const t of parsed.tasks) {
-          lines.push(`  formlm_execute: appId=${parsed.appId}, module=${t.skill}, plan=<plan_json_above>`);
+          lines.push(`  formlm_execute: appId=${parsed.appId}, module=${t.skill}`);
         }
       }
       return lines.join('\n');
@@ -178,19 +176,19 @@ export async function startMcpServer(): Promise<void> {
     [
       'Generate an execution plan from natural language description (Phase 1 only — does NOT execute any module).',
       'Server runs: Plan AI (assess-plan.md) → generates task list for 6 modules (form/scale/connect/report/expert/share).',
-      'Returns: appId, planType, plan JSON, and task list. Takes ~10-30 seconds.',
+      'Returns: appId, planType, name, plan JSON, and task list. Takes ~10-30 seconds.',
       '',
       '## Scene Templates (when user description is vague, present these and ask them to choose):',
       '1. assessment: 评估量表 — 多维度打分 + 分值区间解读报告 (MOST COMMON, for psych/workplace/health)',
       '2. consultation: 咨询评估 — 评估 + AI专家对话解读 (for mental health / coaching)',
       '3. survey: 问卷调查 — 仅收集数据，无打分 (for feedback / research)',
       '4. exam: 考试测验 — 标准答案 + 对错判分 (for education / training)',
-      '5. quiz: 趣味测试 — 轻松风格 + 结果分类 (for engagement / personality)',
+      '5. report: 外部评测 — 对外部对象打分评价+报告 (for performance reviews / 360 feedback)',
       '6. learn: 学习卡片 — 知识点 + 自测题 (for micro-learning)',
       '',
       '## AFTER SUCCESS — execute modules sequentially via formlm_execute:',
-      'For each module in the task list (form → scale → connect → report → expert → share), call:',
-      '  formlm_execute with appId, module, and the plan JSON from this result',
+      'The plan is cached server-side — just call formlm_execute with appId and module for each module.',
+      'No need to pass the plan JSON back — it is handled automatically.',
       '',
       '## USER FEEDBACK (IMPORTANT for good UX):',
       'After getting the plan, tell the user: "✅ 计划已生成！" and list the modules.',
@@ -209,13 +207,13 @@ export async function startMcpServer(): Promise<void> {
       'Example: "A workplace stress assessment for office workers with 3 dimensions (workload, autonomy, support), 15 questions, score 0-60, detailed result interpretation, dark professional style". ' +
       'Supports up to 8000 characters. If user pastes reference documents, include them here.'
     ),
-    planType: z.enum(['assessment', 'consultation', 'survey', 'exam', 'quiz', 'learn']).optional().describe(
+    planType: z.enum(['assessment', 'consultation', 'survey', 'exam', 'report', 'learn']).optional().describe(
       'Plan type. Choose based on user needs: ' +
       '"assessment" (scoring+report, for psych/workplace/health evaluations, MOST COMMON), ' +
       '"consultation" (scoring+report+AI expert chat, for mental health/coaching), ' +
       '"survey" (no scoring, for feedback/research), ' +
       '"exam" (correct-answer scoring, for education/training), ' +
-      '"quiz" (fun result categories, for engagement), ' +
+      '"report" (external evaluation/rating of others, for performance reviews), ' +
       '"learn" (knowledge cards + self-test, for micro-learning). ' +
       'Default: auto-detected by Plan AI based on your description.'
     ),
@@ -223,7 +221,7 @@ export async function startMcpServer(): Promise<void> {
       'Visual style preference. Suggested options: "温暖亲切" (warm friendly, for health/care), ' +
       '"正式专业" (formal professional, for workplace/corporate), ' +
       '"简洁直接" (minimal clean, for general use), ' +
-      '"轻松活泼" (lively playful, for quiz/education). ' +
+      '"轻松活泼" (lively playful, for exam/learn scenarios). ' +
       'Or custom: "深色科技风" / "warm friendly pastel" / "minimal clean white".'
     ),
     questionCount: z.enum(['10-15', '15-20', '20-30']).optional().describe(
@@ -261,14 +259,16 @@ export async function startMcpServer(): Promise<void> {
       'After the last module (share), present the 3 URLs to the user.',
       '',
       '## PLAN PASSING:',
-      'Pass the plan JSON from formlm_generate (or the updated plan from the previous formlm_execute call).',
-      'The updated plan JSON is included in each response — use it for the next call.',
+      'Plan is cached server-side after formlm_generate — no need to pass it manually.',
+      'Just call formlm_execute with appId and module for each module in sequence.',
     ].join('\n'), {
     appId: z.string().describe('App ID from formlm_generate result'),
     module: z.string().describe('Module to execute: form / scale / connect / report / expert / share'),
-    plan: z.string().describe('Plan JSON from formlm_generate or previous formlm_execute response'),
+    plan: z.string().optional().describe('Plan JSON (optional — plan is cached server-side after formlm_generate)'),
   }, async (params) => {
-    const cmd = `assess smart execute --app ${params.appId} --module ${params.module} --plan "${escapeArg(params.plan)}" --json`;
+    let cmd = `assess smart execute --app ${params.appId} --module ${params.module}`;
+    if (params.plan) cmd += ` --plan "${escapeArg(params.plan)}"`;
+    cmd += ' --json';
     const r = await execCommand(cmd, undefined, TIMEOUT_EXECUTE);
 
     if (r.code !== 0) {
@@ -287,13 +287,6 @@ export async function startMcpServer(): Promise<void> {
         if (parsed.error) lines.push(`Error: ${parsed.error}`);
       } else {
         lines.push(`✅ Module '${params.module}' completed (status: ${status})`);
-      }
-
-      // Include updated plan JSON for the next call
-      if (parsed.plan) {
-        lines.push('');
-        lines.push('📋 Updated Plan JSON (use this for the next formlm_execute call):');
-        lines.push(parsed.plan);
       }
 
       // If this is the share module (last one), auto-fetch URLs
@@ -321,7 +314,7 @@ export async function startMcpServer(): Promise<void> {
         }
       } else {
         lines.push('');
-        lines.push('Next: Call formlm_execute with the next module and the updated plan JSON above.');
+        lines.push('Next: Call formlm_execute with the next module (plan is cached server-side).');
       }
 
       text = lines.join('\n');
