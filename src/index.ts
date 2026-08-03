@@ -17,7 +17,7 @@ const program = new Command();
 
 program
   .name('formlm-cli')
-  .description('The official CLI & MCP Server for FormLM — https://formlm.me\n\n  Quick start:\n    formlm-cli smart generate --input "a mental health screening questionnaire"\n    formlm-cli snapshot --app <appId>\n    formlm-cli skill form\n    formlm-cli mcp  (start MCP server for any MCP client: Claude / Cursor / Codex CLI / Windsurf / etc.)')
+  .description('The official CLI & MCP Server for FormLM — https://formlm.me\n\n  Quick start:\n    formlm-cli smart plan --input "a mental health screening questionnaire"\n    formlm-cli snapshot --app <appId>\n    formlm-cli skill form\n    formlm-cli mcp  (start MCP server for any MCP client: Claude / Cursor / Codex CLI / Windsurf / etc.)')
   .version(VERSION)
   .option('--profile <name>', 'Profile to use (overrides default)');
 

@@ -14,11 +14,9 @@ function toText(r: { code: number; message: string; data: any }): string {
   return r.code === 0 ? (r.data || r.message) : `❌ [${r.code}] ${r.message}`;
 }
 
-// ── Helper: format formlm_generate result for better AI consumption ────────────
-// Extracts key fields (appId, shareUrl, planType, taskCount) from JSON result
-// and presents them in a structured summary for the AI Agent to relay to the user.
-// The full raw JSON is intentionally NOT dumped here (it can be very long for
-// multi-task pipelines) — use formlm_snapshot if full detail is needed.
+// ── Helper: format formlm_generate (smart plan) result for AI consumption ──────
+// Extracts key fields (appId, planType, tasks) from plan result
+// and presents them with next-step guidance for sequential module execution.
 function formatGenerateResult(r: { code: number; message: string; data: any }): string {
   if (r.code !== 0) {
     return `❌ [${r.code}] ${r.message}`;
@@ -31,32 +29,26 @@ function formatGenerateResult(r: { code: number; message: string; data: any }): 
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && parsed.appId) {
       const lines: string[] = [];
-      const status = parsed.status === 'partial_error' ? '⚠️ Partial Success' : '✅ Success';
-      lines.push(status);
-      if (parsed.appId) lines.push(`📋 App ID: ${parsed.appId}`);
+      lines.push('✅ Plan generated successfully');
+      lines.push(`📋 App ID: ${parsed.appId}`);
       if (parsed.planType) lines.push(`🎯 Type: ${parsed.planType}`);
       if (parsed.description) lines.push(`📝 Description: ${parsed.description}`);
       if (parsed.taskCount != null) lines.push(`📊 Tasks: ${parsed.taskCount}`);
-      if (parsed.shareUrl) lines.push(`🔗 Fill-in URL: ${parsed.shareUrl}`);
-      if (parsed.builderUrl) lines.push(`🎨 Editor URL: ${parsed.builderUrl}`);
-      if (parsed.dataUrl) lines.push(`📊 Data URL: ${parsed.dataUrl}`);
       if (parsed.tasks && Array.isArray(parsed.tasks)) {
-        const done = parsed.tasks.filter((t: any) => t.status === 'done').length;
-        const errors = parsed.tasks.filter((t: any) => t.status === 'error').length;
-        if (errors > 0) {
-          lines.push(`⚠️ ${done}/${parsed.tasks.length} tasks done, ${errors} errors`);
-          if (Array.isArray(parsed.tasks)) {
-            const errorTasks = parsed.tasks.filter((t: any) => t.status === 'error');
-            for (const t of errorTasks) {
-              lines.push(`   ✗ ${t.name || t.id || 'task'}: ${t.error || t.message || 'unknown error'}`);
-            }
-          }
-        } else {
-          lines.push(`✅ All ${parsed.tasks.length} tasks completed`);
+        lines.push('');
+        lines.push('Tasks:');
+        for (const t of parsed.tasks) {
+          lines.push(`  ${t.seq}. [${t.skill}] ${t.title}`);
+        }
+        lines.push('');
+        lines.push('📋 Plan JSON (pass this to each smart execute call):');
+        lines.push(parsed.plan || '');
+        lines.push('');
+        lines.push('Next: Use formlm_execute to execute each module sequentially:');
+        for (const t of parsed.tasks) {
+          lines.push(`  formlm_execute: appId=${parsed.appId}, module=${t.skill}, plan=<plan_json_above>`);
         }
       }
-      lines.push('');
-      lines.push('🔍 Use formlm_snapshot to see full app details (do not dump raw JSON to the user).');
       return lines.join('\n');
     }
   } catch {
@@ -69,7 +61,8 @@ function formatGenerateResult(r: { code: number; message: string; data: any }): 
 // Most commands complete in < 5 seconds.
 // Smart pipeline (AssessAgent) takes 30-300 seconds.
 const TIMEOUT_DEFAULT  = 60_000;   // 60s for all direct CLI commands
-const TIMEOUT_SMART    = 600_000;  // 10min for formlm_generate (consultation can take 5min+)
+const TIMEOUT_PLAN     = 120_000;  // 2min for smart plan (Phase 1 only, ~10-30s)
+const TIMEOUT_EXECUTE  = 300_000;  // 5min for smart execute (single module, ~30-120s)
 const TIMEOUT_STYLE    = 600_000;  // 10min for connect style apply/apply-all (AI-generated styles can take 60-120s)
 
 export async function startMcpServer(): Promise<void> {
@@ -118,14 +111,14 @@ export async function startMcpServer(): Promise<void> {
   }
 
   // ════════════════════════════════════════════════════════════════
-  //  MCP TOOLS — Layered Architecture (6 tools, down from 34)
+  //  MCP TOOLS — Layered Architecture (7 tools)
   //
-  //  Recommended workflow:
+  //  Recommended workflow (smart pipeline):
   //    1. auth_login → authenticate
-  //    2. formlm_generate → build a complete new app from scratch, OR
-  //       formlm_skill (read domain rules) + formlm_exec (direct commands)
-  //    3. formlm_snapshot → check current state
-  //    4. formlm_exec → direct fine-grained commands for modifications
+  //    2. formlm_generate → generate plan (Phase 1, ~10-30s)
+  //    3. formlm_execute → execute each module sequentially (form→scale→connect→report→expert→share)
+  //    4. formlm_snapshot → verify the app
+  //    5. formlm_exec → fine-grained modifications (advanced)
   // ════════════════════════════════════════════════════════════════
 
   // ── Tier 0: Authentication ────────────────────────────────────
@@ -176,20 +169,16 @@ export async function startMcpServer(): Promise<void> {
     return { content: [{ type: 'text' as const, text: `❌ Token invalid: ${result.message}` }] };
   });
 
-  // ── Tier 1: Smart Pipeline (Natural Language → Full App) ────────
+  // ── Tier 1: Smart Pipeline (Natural Language → Plan + Sequential Execute) ─
   //
-  // This tool wraps the server-side AssessAgent intelligence.
-  // It is the RECOMMENDED entry point for AI agents:
-  //   - Same engine that powers newapp.html (SKILL.md constraints, reference data injection, retry)
-  //   - One call replaces 30+ sequential formlm_exec calls
-  //   - Returns appId + full task execution log
-  //   - WARNING: may take 60-300 seconds for complex apps (consultation: 6 tasks)
+  // This tool generates an execution plan (Phase 1 only, ~10-30s).
+  // After getting the plan, use formlm_exec to execute each module sequentially.
 
   server.tool('formlm_generate',
     [
-      'Create a COMPLETE production-ready assessment app from natural language.',
-      'Server runs: Plan AI (assess-plan.md) → per-task SKILL.md injection → CLI execution → result collection.',
-      'Equivalent to the full newapp.html pipeline. Returns JSON with appId, planType, shareUrl, task statuses, and full execution log.',
+      'Generate an execution plan from natural language description (Phase 1 only — does NOT execute any module).',
+      'Server runs: Plan AI (assess-plan.md) → generates task list for 6 modules (form/scale/connect/report/expert/share).',
+      'Returns: appId, planType, plan JSON, and task list. Takes ~10-30 seconds.',
       '',
       '## Scene Templates (when user description is vague, present these and ask them to choose):',
       '1. assessment: 评估量表 — 多维度打分 + 分值区间解读报告 (MOST COMMON, for psych/workplace/health)',
@@ -199,30 +188,21 @@ export async function startMcpServer(): Promise<void> {
       '5. quiz: 趣味测试 — 轻松风格 + 结果分类 (for engagement / personality)',
       '6. learn: 学习卡片 — 知识点 + 自测题 (for micro-learning)',
       '',
-      '## Progress Feedback (tell the user BEFORE calling):',
-      'Tell the user: "正在生成完整的评估应用，包含表单/量表/报告/发布等步骤，预计需要2-5分钟，请耐心等待..."',
-      'Expected duration: assessment 60-120s / consultation 180-300s / survey 30-60s.',
+      '## AFTER SUCCESS — execute modules sequentially via formlm_execute:',
+      'For each module in the task list (form → scale → connect → report → expert → share), call:',
+      '  formlm_execute with appId, module, and the plan JSON from this result',
       '',
-      '## AFTER SUCCESS:',
-      '1. Parse the returned JSON — it contains THREE URLs you must present to the user:',
-      '   - shareUrl: the fill-in URL for respondents to submit answers',
-      '   - builderUrl: the visual editor URL for online modification (builder.html)',
-      '   - dataUrl: the data management URL for viewing collected responses (data.html)',
-      '2. Present ALL THREE URLs to the user prominently — they need all three to manage their app.',
-      '3. Use formlm_snapshot to verify the generated app if needed.',
-      '4. If the user needs the URLs again later, use formlm_exec: "assess app urls --app <appId> --json".',
+      '## USER FEEDBACK (IMPORTANT for good UX):',
+      'After getting the plan, tell the user: "✅ 计划已生成！" and list the modules.',
+      'Before each formlm_execute call, tell the user which module is being generated.',
+      'After each call, tell the user the module is done.',
+      'After the last module (share), the 3 app URLs are returned automatically — present them to the user.',
       '',
-      '## ON FAILURE:',
-      '- If timeout: ask user to simplify the description (fewer dimensions, fewer questions).',
-      '- If partial success: use formlm_snapshot to check what was generated, then use formlm_exec to complete.',
-      '- Always offer to retry with a simplified description.',
+      'After all modules are executed, use formlm_snapshot to verify the app.',
       '',
       '## Reference Documents:',
       'If the user has reference documents (questionnaire files, scoring criteria), ask them to paste the content',
-      'directly into the chat. The input supports up to 8000 characters. For longer documents, summarize key points:',
-      'dimensions, question count, scoring rules.',
-      '',
-      'WARNING: Takes 60-300 seconds. Do NOT cancel — let it complete.',
+      'directly into the chat. The input supports up to 8000 characters.',
     ].join('\n'), {
     input: z.string().describe(
       'Natural language description of the app. Be specific: mention topic, audience, number of questions, dimensions/subscales, scoring, visual style. ' +
@@ -252,13 +232,103 @@ export async function startMcpServer(): Promise<void> {
       '"20-30" (deep assessment, 8-15 min). Default: auto-decided by AI based on planType.'
     ),
   }, async (params) => {
-    let cmd = `assess smart generate --input "${escapeArg(params.input)}"`;
+    let cmd = `assess smart plan --input "${escapeArg(params.input)}"`;
     if (params.planType) cmd += ` --plan-type ${params.planType}`;
     if (params.style)    cmd += ` --style "${escapeArg(params.style)}"`;
     if (params.questionCount) cmd += ` --question-count ${params.questionCount}`;
     cmd += ' --json';
-    const r = await execCommand(cmd, undefined, TIMEOUT_SMART);
+    const r = await execCommand(cmd, undefined, TIMEOUT_PLAN);
     const text = formatGenerateResult(r);
+    return { content: [{ type: 'text' as const, text }] };
+  });
+
+  // ── Tier 1b: Smart Execute (Single Module) ──────────────────────
+  //
+  // Executes one module at a time from the plan generated by formlm_generate.
+  // Takes structured params (appId, module, plan) — no manual JSON escaping needed.
+  // When the last module (share) completes, auto-fetches the 3 app URLs.
+
+  server.tool('formlm_execute',
+    [
+      'Execute a single module from the plan generated by formlm_generate.',
+      'Call this sequentially for each module, following the task list order from formlm_generate.',
+      'Default order: form → scale → connect → report → expert → share.',
+      'Takes ~30-120 seconds per module. Do NOT cancel.',
+      '',
+      '## USER FEEDBACK (IMPORTANT for good UX):',
+      'Before calling, tell the user: "正在生成 [module] 模块..."',
+      'After calling, tell the user: "✅ [module] 模块完成"',
+      'After the last module (share), present the 3 URLs to the user.',
+      '',
+      '## PLAN PASSING:',
+      'Pass the plan JSON from formlm_generate (or the updated plan from the previous formlm_execute call).',
+      'The updated plan JSON is included in each response — use it for the next call.',
+    ].join('\n'), {
+    appId: z.string().describe('App ID from formlm_generate result'),
+    module: z.string().describe('Module to execute: form / scale / connect / report / expert / share'),
+    plan: z.string().describe('Plan JSON from formlm_generate or previous formlm_execute response'),
+  }, async (params) => {
+    const cmd = `assess smart execute --app ${params.appId} --module ${params.module} --plan "${escapeArg(params.plan)}" --json`;
+    const r = await execCommand(cmd, undefined, TIMEOUT_EXECUTE);
+
+    if (r.code !== 0) {
+      return { content: [{ type: 'text' as const, text: `❌ [${r.code}] ${r.message}` }] };
+    }
+
+    const raw = r.data || r.message;
+    let text: string;
+    try {
+      const parsed = JSON.parse(raw);
+      const lines: string[] = [];
+      const status = parsed.taskStatus || 'unknown';
+
+      if (status === 'error') {
+        lines.push(`❌ Module '${params.module}' failed (status: error)`);
+        if (parsed.error) lines.push(`Error: ${parsed.error}`);
+      } else {
+        lines.push(`✅ Module '${params.module}' completed (status: ${status})`);
+      }
+
+      // Include updated plan JSON for the next call
+      if (parsed.plan) {
+        lines.push('');
+        lines.push('📋 Updated Plan JSON (use this for the next formlm_execute call):');
+        lines.push(parsed.plan);
+      }
+
+      // If this is the share module (last one), auto-fetch URLs
+      if (params.module === 'share') {
+        const urlResult = await execCommand(`assess app urls --app ${params.appId} --json`, undefined, TIMEOUT_DEFAULT);
+        if (urlResult.code === 0) {
+          try {
+            const urls = JSON.parse(urlResult.data || urlResult.message);
+            lines.push('');
+            lines.push('🎉 All modules complete! Your app is ready:');
+            if (urls.shareUrl) lines.push(`🔗 Fill-in URL: ${urls.shareUrl}`);
+            if (urls.builderUrl) lines.push(`🎨 Editor URL: ${urls.builderUrl}`);
+            if (urls.dataUrl) lines.push(`📊 Data URL: ${urls.dataUrl}`);
+            lines.push('');
+            lines.push(`App ID: ${params.appId}`);
+          } catch {
+            lines.push('');
+            lines.push('🎉 All modules complete!');
+            lines.push(`Use formlm_exec: "assess app urls --app ${params.appId} --json" to get the app URLs.`);
+          }
+        } else {
+          lines.push('');
+          lines.push('🎉 All modules complete!');
+          lines.push(`Use formlm_exec: "assess app urls --app ${params.appId} --json" to get the app URLs.`);
+        }
+      } else {
+        lines.push('');
+        lines.push('Next: Call formlm_execute with the next module and the updated plan JSON above.');
+      }
+
+      text = lines.join('\n');
+    } catch {
+      text = raw || r.message;
+    }
+
     return { content: [{ type: 'text' as const, text }] };
   });
 
@@ -342,7 +412,7 @@ export async function startMcpServer(): Promise<void> {
   //   assess report : query / find / update / page / widget / logic
   //   assess expert : query / find / config / set / avatar / remove / chat
   //   assess share  : set / query / url
-  //   assess smart  : generate
+  //   assess smart  : plan / execute
   //   assess skill  : form / scale / connect / report / expert / share
 
   server.tool('formlm_exec',
@@ -367,6 +437,7 @@ export async function startMcpServer(): Promise<void> {
       '  Report:  assess report query/find/update/page/widget/logic',
       '  Expert:  assess expert query/find/config/set/avatar/remove/chat',
       '  Share:   assess share set/query/url',
+      '  Smart:   assess smart plan/execute',
       '',
       'Common patterns:',
       '  "assess app list --json"                                                                    (discover appId by name)',
@@ -400,8 +471,9 @@ export async function startMcpServer(): Promise<void> {
     }
     // Use longer timeout for commands that trigger server-side AI generation
     const isStyleCmd = params.command.includes('connect style apply');
-    const isSmartCmd = params.command.includes('smart generate');
-    const timeout = (isStyleCmd || isSmartCmd) ? TIMEOUT_STYLE : TIMEOUT_DEFAULT;
+    const isSmartPlan = params.command.includes('smart plan');
+    const isSmartExecute = params.command.includes('smart execute');
+    const timeout = isStyleCmd ? TIMEOUT_STYLE : isSmartExecute ? TIMEOUT_EXECUTE : isSmartPlan ? TIMEOUT_PLAN : TIMEOUT_DEFAULT;
     const r = await execCommand(params.command, undefined, timeout);
     return { content: [{ type: 'text' as const, text: toText(r) }] };
   });
@@ -410,5 +482,5 @@ export async function startMcpServer(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`FormLM MCP Server v${VERSION} running on stdio (6 tools + 6 resources)`);
+  console.error(`FormLM MCP Server v${VERSION} running on stdio (7 tools + 6 resources)`);
 }

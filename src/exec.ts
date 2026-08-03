@@ -17,7 +17,7 @@ export interface ExecResult {
  * @param profileName Optional profile name override
  * @param timeoutMs   Request timeout in milliseconds.
  *                    Default: 60_000 (60s) for most commands.
- *                    Smart pipeline commands (assess smart generate) should use 300_000 (5min).
+ *                    Smart plan should use 120_000 (2min), smart execute 300_000 (5min).
  */
 export async function execCommand(
   cmd: string,
@@ -72,10 +72,10 @@ export async function execCommand(
       req.destroy();
       const isSmart = timeoutMs > 120_000;
       const hint = isSmart
-        ? `Smart pipeline may take 60-300s (consultation can take 5min+). ` +
+        ? `Smart plan/execute may take up to 5min. ` +
           `If timeout persists: 1) simplify the description (fewer dimensions/questions), ` +
-          `2) use formlm_snapshot to check if partially generated, ` +
-          `3) use formlm_exec to complete partial results.`
+          `2) use formlm_snapshot to check partial results, ` +
+          `3) use formlm_exec to complete remaining modules.`
         : `Try again or simplify the command.`;
       settle({
         code: 408,
