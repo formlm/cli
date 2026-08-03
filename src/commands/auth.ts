@@ -3,6 +3,63 @@ import { authLogin, authMe } from '../exec.js';
 import { addProfile, removeProfile, getActiveProfile, getBaseUrl } from '../config.js';
 import * as readline from 'node:readline';
 
+/**
+ * Read a password from stdin with masking.
+ * - TTY: switches to raw mode so keystrokes are captured immediately, echoes '*'
+ *   per char, supports Backspace and Ctrl+C. Prevents plaintext echo on screen.
+ * - Non-TTY (piped input): falls back to plain readline (masking impossible).
+ */
+function askPassword(prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    if (stdin.isTTY) {
+      process.stdout.write(prompt);
+      stdin.setRawMode(true);
+      stdin.resume();
+      let password = '';
+      const onData = (buf: Buffer) => {
+        const chars = buf.toString();
+        for (const ch of chars) {
+          if (ch === '\r' || ch === '\n') {
+            stdin.setRawMode(false);
+            stdin.pause();
+            stdin.removeListener('data', onData);
+            process.stdout.write('\n');
+            resolve(password);
+            return;
+          } else if (ch === '\u0003') { // Ctrl+C
+            stdin.setRawMode(false);
+            process.exit(1);
+          } else if (ch === '\u0004') { // Ctrl+D (EOF)
+            stdin.setRawMode(false);
+            stdin.pause();
+            stdin.removeListener('data', onData);
+            process.stdout.write('\n');
+            resolve(password);
+            return;
+          } else if (ch === '\u007f' || ch === '\b') { // Backspace / Ctrl+H
+            if (password.length > 0) {
+              password = password.slice(0, -1);
+              process.stdout.write('\b \b');
+            }
+          } else if (ch >= ' ') { // printable chars only
+            password += ch;
+            process.stdout.write('*');
+          }
+        }
+      };
+      stdin.on('data', onData);
+    } else {
+      // Non-TTY: cannot mask piped input, fall back to plain readline
+      const rl = readline.createInterface({ input: stdin, output: process.stdout });
+      rl.question(prompt, (answer) => {
+        rl.close();
+        resolve(answer);
+      });
+    }
+  });
+}
+
 export function registerAuthCommand(parent: Command): void {
   const auth = parent.command('auth').description('Authentication management');
 
@@ -29,13 +86,14 @@ export function registerAuthCommand(parent: Command): void {
         return;
       }
 
-      // Interactive input
+      // Interactive input (email via readline, password via masked raw-mode reader)
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const ask = (q: string): Promise<string> => new Promise(res => rl.question(q, res));
 
       const email = await ask('Email: ');
-      const password = await ask('Password: ');
       rl.close();
+      const password = await askPassword('Password: ');
+      console.log();
 
       const result = await authLogin(email, password);
       if (result.code === 0 && result.data) {

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
 import { output } from '../output.js';
+import { escapeArg } from '../utils.js';
 
 export function registerAppCommand(parent: Command): void {
   const app = parent.command('app').description('App management');
@@ -19,7 +20,7 @@ export function registerAppCommand(parent: Command): void {
     .requiredOption('--name <name>', 'App name')
     .option('--description <desc>', 'App description')
     .action(async (opts) => {
-      const cmd = `assess app create --name "${opts.name}"${opts.description ? ` --description "${opts.description}"` : ''} --json`;
+      const cmd = `assess app create --name "${escapeArg(opts.name)}"${opts.description ? ` --description "${escapeArg(opts.description)}"` : ''} --json`;
       const result = await execCommand(cmd);
       output(result);
       if (result.code === 0) {
@@ -54,8 +55,8 @@ export function registerAppCommand(parent: Command): void {
     .option('--theme <theme>', 'App theme')
     .action(async (opts) => {
       let cmd = `assess app update --app ${opts.app}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
-      if (opts.description) cmd += ` --description "${opts.description}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
+      if (opts.description) cmd += ` --description "${escapeArg(opts.description)}"`;
       if (opts.theme) cmd += ` --theme ${opts.theme}`;
       cmd += ' --json';
       const result = await execCommand(cmd);

@@ -108,6 +108,7 @@ export async function authLogin(email: string, password: string): Promise<ExecRe
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
       },
+      timeout: 30_000, // 30s — auth should be fast; prevent indefinite hang
     }, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
@@ -127,7 +128,14 @@ export async function authLogin(email: string, password: string): Promise<ExecRe
       });
     });
 
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ code: 408, message: 'Auth request timed out after 30s', data: null });
+    });
+
     req.on('error', (err) => {
+      // Ignore ECONNRESET caused by req.destroy() in timeout handler
+      if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return;
       resolve({ code: 500, message: `Request failed: ${err.message}`, data: null });
     });
 
@@ -156,6 +164,7 @@ export async function authMe(profileName?: string): Promise<ExecResult> {
       headers: {
         'Authorization': token,
       },
+      timeout: 15_000, // 15s — token check should be fast; prevent indefinite hang
     }, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
@@ -175,7 +184,14 @@ export async function authMe(profileName?: string): Promise<ExecResult> {
       });
     });
 
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ code: 408, message: 'Auth check timed out after 15s', data: null });
+    });
+
     req.on('error', (err) => {
+      // Ignore ECONNRESET caused by req.destroy() in timeout handler
+      if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return;
       resolve({ code: 500, message: `Request failed: ${err.message}`, data: null });
     });
 

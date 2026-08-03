@@ -1,19 +1,13 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
 import { output } from '../output.js';
+import { escapeArg, normBool } from '../utils.js';
 
 // ── Timeouts ──────────────────────────────────────────────────────────────────
 // connect style apply/apply-all triggers server-side AI style generation (30-120s),
 // so they need a longer timeout than regular CLI commands.
 const TIMEOUT_DEFAULT = 60_000;   // 60s for query/find/set/move (non-AI commands)
 const TIMEOUT_STYLE   = 600_000;  // 10min for style apply/apply-all (AI-generated styles)
-
-// Normalize commander optional boolean flags to true/false/undefined
-function normBool(v: unknown): boolean | undefined {
-  if (v === undefined) return undefined;
-  if (typeof v === 'boolean') return v;
-  return v === 'true' || v === '1';
-}
 
 export function registerConnectCommand(parent: Command): void {
   const connect = parent.command('connect').description('Page styling & visual customization — P0: --theme must be one of 6 design modes (scenic/skeuomorphic/liquid/glassmorphism/immersive/minimalist). --look must include scenario + visual style. NEVER use type names (cover/main/final) as --id. Run "formlm-cli skill connect" for full constraints');
@@ -30,7 +24,7 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect query --app ${opts.app}`;
       if (opts.type) cmd += ` --type ${opts.type}`;
-      if (opts.filter) cmd += ` --filter "${opts.filter}"`;
+      if (opts.filter) cmd += ` --filter "${escapeArg(opts.filter)}"`;
       if (opts.md) cmd += ` --md`;
       else cmd += ` --json`;
       const result = await execCommand(cmd);
@@ -43,7 +37,7 @@ export function registerConnectCommand(parent: Command): void {
     .requiredOption('--app <appId>', 'App ID')
     .requiredOption('--filter <keyword>', 'Keyword to search (matches id/type/name/format)')
     .action(async (opts) => {
-      const cmd = `assess connect find --app ${opts.app} --filter "${opts.filter}" --json`;
+      const cmd = `assess connect find --app ${opts.app} --filter "${escapeArg(opts.filter)}" --json`;
       const result = await execCommand(cmd);
       output(result);
     });
@@ -96,20 +90,20 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect cover-page add --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       if (opts.layout) cmd += ` --layout ${opts.layout}`;
-      if (opts.value) cmd += ` --value "${opts.value}"`;
-      if (opts.description) cmd += ` --description "${opts.description}"`;
-      if (opts.subtitle) cmd += ` --subtitle "${opts.subtitle}"`;
+      if (opts.value) cmd += ` --value "${escapeArg(opts.value)}"`;
+      if (opts.description) cmd += ` --description "${escapeArg(opts.description)}"`;
+      if (opts.subtitle) cmd += ` --subtitle "${escapeArg(opts.subtitle)}"`;
       const ess = normBool(opts.enableSplitScreen);
       if (ess !== undefined) cmd += ` --enable-split-screen=${ess}`;
-      if (opts.screenText) cmd += ` --screen-text "${opts.screenText}"`;
+      if (opts.screenText) cmd += ` --screen-text "${escapeArg(opts.screenText)}"`;
       const eh = normBool(opts.enableHead);
       if (eh !== undefined) cmd += ` --enable-head=${eh}`;
       const etw = normBool(opts.enableTitleWriter);
       if (etw !== undefined) cmd += ` --enable-title-writer=${etw}`;
-      if (opts.logo) cmd += ` --logo ${opts.logo}`;
+      if (opts.logo) cmd += ` --logo "${escapeArg(opts.logo)}"`;
       const el = normBool(opts.enableLogo);
       if (el !== undefined) cmd += ` --enable-logo=${el}`;
       cmd += ' --json';
@@ -139,20 +133,20 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect cover-page update --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       if (opts.layout) cmd += ` --layout ${opts.layout}`;
-      if (opts.value) cmd += ` --value "${opts.value}"`;
-      if (opts.description) cmd += ` --description "${opts.description}"`;
-      if (opts.subtitle) cmd += ` --subtitle "${opts.subtitle}"`;
+      if (opts.value) cmd += ` --value "${escapeArg(opts.value)}"`;
+      if (opts.description) cmd += ` --description "${escapeArg(opts.description)}"`;
+      if (opts.subtitle) cmd += ` --subtitle "${escapeArg(opts.subtitle)}"`;
       const ess = normBool(opts.enableSplitScreen);
       if (ess !== undefined) cmd += ` --enable-split-screen=${ess}`;
-      if (opts.screenText) cmd += ` --screen-text "${opts.screenText}"`;
+      if (opts.screenText) cmd += ` --screen-text "${escapeArg(opts.screenText)}"`;
       const eh = normBool(opts.enableHead);
       if (eh !== undefined) cmd += ` --enable-head=${eh}`;
       const etw = normBool(opts.enableTitleWriter);
       if (etw !== undefined) cmd += ` --enable-title-writer=${etw}`;
-      if (opts.logo) cmd += ` --logo ${opts.logo}`;
+      if (opts.logo) cmd += ` --logo "${escapeArg(opts.logo)}"`;
       const el = normBool(opts.enableLogo);
       if (el !== undefined) cmd += ` --enable-logo=${el}`;
       if (opts.logoSize !== undefined) cmd += ` --logo-size ${opts.logoSize}`;
@@ -186,7 +180,7 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect cover-page set --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      cmd += ` --property ${opts.property} --value "${opts.value}" --json`;
+      cmd += ` --property ${opts.property} --value "${escapeArg(opts.value)}" --json`;
       const result = await execCommand(cmd);
       output(result);
     });
@@ -229,12 +223,12 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect final-page add --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       if (opts.layout) cmd += ` --layout ${opts.layout}`;
-      if (opts.value) cmd += ` --value "${opts.value}"`;
-      if (opts.description) cmd += ` --description "${opts.description}"`;
-      if (opts.subtitle) cmd += ` --subtitle "${opts.subtitle}"`;
+      if (opts.value) cmd += ` --value "${escapeArg(opts.value)}"`;
+      if (opts.description) cmd += ` --description "${escapeArg(opts.description)}"`;
+      if (opts.subtitle) cmd += ` --subtitle "${escapeArg(opts.subtitle)}"`;
       const ess = normBool(opts.enableSplitScreen);
       if (ess !== undefined) cmd += ` --enable-split-screen=${ess}`;
       const eh = normBool(opts.enableHead);
@@ -245,7 +239,7 @@ export function registerConnectCommand(parent: Command): void {
       if (er !== undefined) cmd += ` --enable-report=${er}`;
       const ee = normBool(opts.enableExpert);
       if (ee !== undefined) cmd += ` --enable-expert=${ee}`;
-      if (opts.logo) cmd += ` --logo ${opts.logo}`;
+      if (opts.logo) cmd += ` --logo "${escapeArg(opts.logo)}"`;
       const el = normBool(opts.enableLogo);
       if (el !== undefined) cmd += ` --enable-logo=${el}`;
       cmd += ' --json';
@@ -276,12 +270,12 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect final-page update --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       if (opts.layout) cmd += ` --layout ${opts.layout}`;
-      if (opts.value) cmd += ` --value "${opts.value}"`;
-      if (opts.description) cmd += ` --description "${opts.description}"`;
-      if (opts.subtitle) cmd += ` --subtitle "${opts.subtitle}"`;
+      if (opts.value) cmd += ` --value "${escapeArg(opts.value)}"`;
+      if (opts.description) cmd += ` --description "${escapeArg(opts.description)}"`;
+      if (opts.subtitle) cmd += ` --subtitle "${escapeArg(opts.subtitle)}"`;
       const ess = normBool(opts.enableSplitScreen);
       if (ess !== undefined) cmd += ` --enable-split-screen=${ess}`;
       const eh = normBool(opts.enableHead);
@@ -292,7 +286,7 @@ export function registerConnectCommand(parent: Command): void {
       if (er !== undefined) cmd += ` --enable-report=${er}`;
       const ee = normBool(opts.enableExpert);
       if (ee !== undefined) cmd += ` --enable-expert=${ee}`;
-      if (opts.logo) cmd += ` --logo ${opts.logo}`;
+      if (opts.logo) cmd += ` --logo "${escapeArg(opts.logo)}"`;
       const el = normBool(opts.enableLogo);
       if (el !== undefined) cmd += ` --enable-logo=${el}`;
       if (opts.logoSize !== undefined) cmd += ` --logo-size ${opts.logoSize}`;
@@ -326,7 +320,7 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect final-page set --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      cmd += ` --property ${opts.property} --value "${opts.value}" --json`;
+      cmd += ` --property ${opts.property} --value "${escapeArg(opts.value)}" --json`;
       const result = await execCommand(cmd);
       output(result);
     });
@@ -360,7 +354,7 @@ export function registerConnectCommand(parent: Command): void {
       let cmd = `assess connect main-page set --app ${opts.app}`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       if (opts.field) cmd += ` --field ${opts.field}`;
-      if (opts.description) cmd += ` --description "${opts.description}"`;
+      if (opts.description) cmd += ` --description "${escapeArg(opts.description)}"`;
       const clr = normBool(opts.clear);
       if (clr !== undefined) cmd += ` --clear=${clr}`;
       cmd += ' --json';
@@ -404,21 +398,21 @@ export function registerConnectCommand(parent: Command): void {
       if (opts.font) cmd += ` --font ${opts.font}`;
       if (opts.panel) cmd += ` --panel ${opts.panel}`;
       if (opts.chat) cmd += ` --chat ${opts.chat}`;
-      if (opts.bgImage) cmd += ` --bg-image ${opts.bgImage}`;
+      if (opts.bgImage) cmd += ` --bg-image "${escapeArg(opts.bgImage)}"`;
       if (opts.bgColor) cmd += ` --bg-color ${opts.bgColor}`;
       const bf = normBool(opts.bgFill);
       if (bf !== undefined) cmd += ` --bg-fill=${bf}`;
       if (opts.head) cmd += ` --head ${opts.head}`;
-      if (opts.headImage) cmd += ` --head-image ${opts.headImage}`;
+      if (opts.headImage) cmd += ` --head-image "${escapeArg(opts.headImage)}"`;
       const hh = normBool(opts.hideHead);
       if (hh !== undefined) cmd += ` --hide-head=${hh}`;
       if (opts.foot) cmd += ` --foot ${opts.foot}`;
       if (opts.action) cmd += ` --action ${opts.action}`;
-      if (opts.submitLabel) cmd += ` --submit-label "${opts.submitLabel}"`;
+      if (opts.submitLabel) cmd += ` --submit-label "${escapeArg(opts.submitLabel)}"`;
       if (opts.align) cmd += ` --align ${opts.align}`;
       if (opts.writerSpeed) cmd += ` --writer-speed ${opts.writerSpeed}`;
       if (opts.writerAction) cmd += ` --writer-action ${opts.writerAction}`;
-      if (opts.writerActionValue) cmd += ` --writer-action-value "${opts.writerActionValue}"`;
+      if (opts.writerActionValue) cmd += ` --writer-action-value "${escapeArg(opts.writerActionValue)}"`;
       if (opts.id) cmd += ` --id ${opts.id}`;
       cmd += ' --json';
       const result = await execCommand(cmd);
@@ -448,7 +442,7 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect style apply --app ${opts.app}`;
       if (opts.theme) cmd += ` --theme ${opts.theme}`;
-      if (opts.look) cmd += ` --look "${opts.look}"`;
+      if (opts.look) cmd += ` --look "${escapeArg(opts.look)}"`;
       if (opts.layout) cmd += ` --layout ${opts.layout}`;
       if (opts.type) cmd += ` --type ${opts.type}`;
       if (opts.pageId) cmd += ` --page-id ${opts.pageId}`;
@@ -467,7 +461,7 @@ export function registerConnectCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess connect style apply-all --app ${opts.app}`;
       if (opts.theme) cmd += ` --theme ${opts.theme}`;
-      if (opts.look) cmd += ` --look "${opts.look}"`;
+      if (opts.look) cmd += ` --look "${escapeArg(opts.look)}"`;
       if (opts.layout) cmd += ` --layout ${opts.layout}`;
       cmd += ' --json';
       const result = await execCommand(cmd, undefined, TIMEOUT_STYLE);

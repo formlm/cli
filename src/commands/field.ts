@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
 import { output } from '../output.js';
+import { escapeArg, normBool } from '../utils.js';
 
 // Validate field ID: only alphanumeric + underscore (snake_case), no spaces or special chars
 function validateFieldId(id: string): void {
@@ -8,16 +9,6 @@ function validateFieldId(id: string): void {
     console.error(`❌ Invalid field ID: "${id}". ID must be alphanumeric + underscore (snake_case), e.g. q1_anxiety.`);
     process.exit(1);
   }
-}
-
-// 将 commander 可选值布尔选项规范化为 true/false/undefined：
-// --flag        → opts.flag === true
-// --flag=false  → opts.flag === 'false'（字符串）
-// 未传入     → opts.flag === undefined
-function normBool(v: unknown): boolean | undefined {
-  if (v === undefined) return undefined;
-  if (typeof v === 'boolean') return v;
-  return v === 'true' || v === '1';
 }
 
 export function registerFieldCommand(parent: Command): void {
@@ -60,7 +51,7 @@ export function registerFieldCommand(parent: Command): void {
       let cmd = `assess form find --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
       if (opts.key) cmd += ` --key ${opts.key}`;
-      if (opts.filter) cmd += ` --filter "${opts.filter}"`;
+      if (opts.filter) cmd += ` --filter "${escapeArg(opts.filter)}"`;
       cmd += ' --json';
       const result = await execCommand(cmd);
       output(result);
@@ -90,19 +81,19 @@ export function registerFieldCommand(parent: Command): void {
     .action(async (opts) => {
       validateFieldId(opts.id);
       let cmd = `assess form add --app ${opts.app} --id ${opts.id} --type ${opts.type}`;
-      if (opts.title) cmd += ` --title "${opts.title}"`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
-      if (opts.options) cmd += ` --options "${opts.options}"`;
+      if (opts.title) cmd += ` --title "${escapeArg(opts.title)}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
+      if (opts.options) cmd += ` --options "${escapeArg(opts.options)}"`;
       const required = normBool(opts.required);
       if (required !== undefined) cmd += ` --required=${required}`;
       if (opts.score !== undefined) cmd += ` --score ${opts.score}`;
       if (opts.min !== undefined) cmd += ` --min ${opts.min}`;
       if (opts.max !== undefined) cmd += ` --max ${opts.max}`;
-      if (opts.placeholder) cmd += ` --placeholder "${opts.placeholder}"`;
+      if (opts.placeholder) cmd += ` --placeholder "${escapeArg(opts.placeholder)}"`;
       if (opts.inputMask) cmd += ` --inputMask ${opts.inputMask}`;
-      if (opts.content) cmd += ` --content "${opts.content}"`;
-      if (opts.answer) cmd += ` --answer "${opts.answer}"`;
-      if (opts.explanation) cmd += ` --explanation "${opts.explanation}"`;
+      if (opts.content) cmd += ` --content "${escapeArg(opts.content)}"`;
+      if (opts.answer) cmd += ` --answer "${escapeArg(opts.answer)}"`;
+      if (opts.explanation) cmd += ` --explanation "${escapeArg(opts.explanation)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       const unique = normBool(opts.unique);
       if (unique !== undefined) cmd += ` --unique=${unique}`;
@@ -144,19 +135,19 @@ export function registerFieldCommand(parent: Command): void {
       if (opts.id) cmd += ` --id ${opts.id}`;
       if (opts.key) cmd += ` --key ${opts.key}`;
       if (opts.type) cmd += ` --type ${opts.type}`;
-      if (opts.title) cmd += ` --title "${opts.title}"`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
-      if (opts.options) cmd += ` --options "${opts.options}"`;
+      if (opts.title) cmd += ` --title "${escapeArg(opts.title)}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
+      if (opts.options) cmd += ` --options "${escapeArg(opts.options)}"`;
       const required = normBool(opts.required);
       if (required !== undefined) cmd += ` --required=${required}`;
       if (opts.score !== undefined) cmd += ` --score ${opts.score}`;
       if (opts.min !== undefined) cmd += ` --min ${opts.min}`;
       if (opts.max !== undefined) cmd += ` --max ${opts.max}`;
-      if (opts.placeholder) cmd += ` --placeholder "${opts.placeholder}"`;
+      if (opts.placeholder) cmd += ` --placeholder "${escapeArg(opts.placeholder)}"`;
       if (opts.inputMask) cmd += ` --inputMask ${opts.inputMask}`;
-      if (opts.content) cmd += ` --content "${opts.content}"`;
-      if (opts.answer) cmd += ` --answer "${opts.answer}"`;
-      if (opts.explanation) cmd += ` --explanation "${opts.explanation}"`;
+      if (opts.content) cmd += ` --content "${escapeArg(opts.content)}"`;
+      if (opts.answer) cmd += ` --answer "${escapeArg(opts.answer)}"`;
+      if (opts.explanation) cmd += ` --explanation "${escapeArg(opts.explanation)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       const unique = normBool(opts.unique);
       if (unique !== undefined) cmd += ` --unique=${unique}`;
@@ -202,7 +193,7 @@ export function registerFieldCommand(parent: Command): void {
       let cmd = `assess form set-property --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
       if (opts.key) cmd += ` --key ${opts.key}`;
-      cmd += ` --property ${opts.property} --value "${opts.value}"`;
+      cmd += ` --property ${opts.property} --value "${escapeArg(opts.value)}"`;
       const result = await execCommand(cmd);
       output(result);
     });

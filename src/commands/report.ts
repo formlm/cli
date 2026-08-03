@@ -1,12 +1,7 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
 import { output } from '../output.js';
-
-function normBool(v: unknown): boolean | undefined {
-  if (v === undefined) return undefined;
-  if (typeof v === 'boolean') return v;
-  return v === 'true' || v === '1';
-}
+import { escapeArg, normBool } from '../utils.js';
 
 export function registerReportCommand(parent: Command): void {
   const report = parent.command('report').description('Report pages, widgets & conditional logic');
@@ -25,7 +20,7 @@ export function registerReportCommand(parent: Command): void {
       let cmd = `assess report query --app ${opts.app}`;
       if (opts.md) cmd += ' --md';
       if (opts.human) cmd += ' --human';
-      if (opts.filter) cmd += ` --filter "${opts.filter}"`;
+      if (opts.filter) cmd += ` --filter "${escapeArg(opts.filter)}"`;
       if (opts.expandPage) cmd += ' --expand-page';
       if (!opts.md && !opts.human) cmd += ' --json';
       output(await execCommand(cmd));
@@ -42,7 +37,7 @@ export function registerReportCommand(parent: Command): void {
       let cmd = `assess report find --app ${opts.app}`;
       if (opts.page) cmd += ` --page ${opts.page}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      if (opts.filter) cmd += ` --filter "${opts.filter}"`;
+      if (opts.filter) cmd += ` --filter "${escapeArg(opts.filter)}"`;
       cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -62,11 +57,11 @@ export function registerReportCommand(parent: Command): void {
     .option('--style <css>', 'Extra CSS styles (e.g. background gradient)')
     .option('--bgSvg <svg>', 'SVG background image (full <svg> markup)')
     .action(async (opts) => {
-      let cmd = `assess report page add --app ${opts.app} --name "${opts.name}" --type ${opts.type}`;
+      let cmd = `assess report page add --app ${opts.app} --name "${escapeArg(opts.name)}" --type ${opts.type}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
       if (opts.backgroundColor) cmd += ` --backgroundColor ${opts.backgroundColor}`;
-      if (opts.style) cmd += ` --style "${opts.style}"`;
-      if (opts.bgSvg) cmd += ` --bgSvg "${opts.bgSvg}"`;
+      if (opts.style) cmd += ` --style "${escapeArg(opts.style)}"`;
+      if (opts.bgSvg) cmd += ` --bgSvg "${escapeArg(opts.bgSvg)}"`;
       cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -82,10 +77,10 @@ export function registerReportCommand(parent: Command): void {
     .option('--bgSvg <svg>', 'SVG background image')
     .action(async (opts) => {
       let cmd = `assess report page update --app ${opts.app} --id ${opts.id}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.backgroundColor) cmd += ` --backgroundColor ${opts.backgroundColor}`;
-      if (opts.style) cmd += ` --style "${opts.style}"`;
-      if (opts.bgSvg) cmd += ` --bgSvg "${opts.bgSvg}"`;
+      if (opts.style) cmd += ` --style "${escapeArg(opts.style)}"`;
+      if (opts.bgSvg) cmd += ` --bgSvg "${escapeArg(opts.bgSvg)}"`;
       cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -155,7 +150,7 @@ export function registerReportCommand(parent: Command): void {
     .requiredOption('--property <property>', 'Property path (e.g. name, value, type, x, y, w, h, scaleId, fieldKey, layoutData.backgroundColor, layoutData.fontSize)')
     .requiredOption('--value <value>', 'New value')
     .action(async (opts) => {
-      const cmd = `assess report widget set --app ${opts.app} --page ${opts.page} --id ${opts.id} --property ${opts.property} --value "${opts.value}" --json`;
+      const cmd = `assess report widget set --app ${opts.app} --page ${opts.page} --id ${opts.id} --property ${opts.property} --value "${escapeArg(opts.value)}" --json`;
       output(await execCommand(cmd));
     });
 
@@ -204,28 +199,28 @@ export function registerReportCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess report widget add --app ${opts.app} --page ${opts.page} --type ${opts.type}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.x !== undefined) cmd += ` --x ${opts.x}`;
       if (opts.y !== undefined) cmd += ` --y ${opts.y}`;
       if (opts.w !== undefined) cmd += ` --w ${opts.w}`;
       if (opts.h !== undefined) cmd += ` --h ${opts.h}`;
-      if (opts.value) cmd += ` --value "${opts.value}"`;
+      if (opts.value) cmd += ` --value "${escapeArg(opts.value)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       if (opts.scaleId) cmd += ` --scaleId ${opts.scaleId}`;
       const eo = normBool(opts.enableOwn);
       if (eo !== undefined) cmd += ` --enableOwn=${eo}`;
       if (opts.fieldKey) cmd += ` --fieldKey ${opts.fieldKey}`;
       if (opts.category) cmd += ` --category ${opts.category}`;
-      if (opts.url) cmd += ` --url ${opts.url}`;
+      if (opts.url) cmd += ` --url "${escapeArg(opts.url)}"`;
       const ed = normBool(opts.enableDisplay);
       if (ed !== undefined) cmd += ` --enableDisplay=${ed}`;
       if (opts.min !== undefined) cmd += ` --min ${opts.min}`;
       if (opts.max !== undefined) cmd += ` --max ${opts.max}`;
-      if (opts.aiPrompt) cmd += ` --aiPrompt "${opts.aiPrompt}"`;
+      if (opts.aiPrompt) cmd += ` --aiPrompt "${escapeArg(opts.aiPrompt)}"`;
       const asd = normBool(opts.aiSendData);
       if (asd !== undefined) cmd += ` --aiSendData=${asd}`;
       if (opts.aiFieldKeys) cmd += ` --aiFieldKeys ${opts.aiFieldKeys}`;
-      if (opts.logic) cmd += ` --logic "${opts.logic}"`;
+      if (opts.logic) cmd += ` --logic "${escapeArg(opts.logic)}"`;
       if (opts.backgroundColor) cmd += ` --backgroundColor ${opts.backgroundColor}`;
       if (opts.roundCorner !== undefined) cmd += ` --roundCorner ${opts.roundCorner}`;
       if (opts.fillColor) cmd += ` --fillColor ${opts.fillColor}`;
@@ -292,29 +287,29 @@ export function registerReportCommand(parent: Command): void {
     .option('--alignY <align>', 'Vertical alignment')
     .action(async (opts) => {
       let cmd = `assess report widget update --app ${opts.app} --page ${opts.page} --id ${opts.id}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.type) cmd += ` --type ${opts.type}`;
       if (opts.x !== undefined) cmd += ` --x ${opts.x}`;
       if (opts.y !== undefined) cmd += ` --y ${opts.y}`;
       if (opts.w !== undefined) cmd += ` --w ${opts.w}`;
       if (opts.h !== undefined) cmd += ` --h ${opts.h}`;
-      if (opts.value) cmd += ` --value "${opts.value}"`;
+      if (opts.value) cmd += ` --value "${escapeArg(opts.value)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       if (opts.scaleId) cmd += ` --scaleId ${opts.scaleId}`;
       const eo = normBool(opts.enableOwn);
       if (eo !== undefined) cmd += ` --enableOwn=${eo}`;
       if (opts.fieldKey) cmd += ` --fieldKey ${opts.fieldKey}`;
       if (opts.category) cmd += ` --category ${opts.category}`;
-      if (opts.url) cmd += ` --url ${opts.url}`;
+      if (opts.url) cmd += ` --url "${escapeArg(opts.url)}"`;
       const ed = normBool(opts.enableDisplay);
       if (ed !== undefined) cmd += ` --enableDisplay=${ed}`;
       if (opts.min !== undefined) cmd += ` --min ${opts.min}`;
       if (opts.max !== undefined) cmd += ` --max ${opts.max}`;
-      if (opts.aiPrompt) cmd += ` --aiPrompt "${opts.aiPrompt}"`;
+      if (opts.aiPrompt) cmd += ` --aiPrompt "${escapeArg(opts.aiPrompt)}"`;
       const asd = normBool(opts.aiSendData);
       if (asd !== undefined) cmd += ` --aiSendData=${asd}`;
       if (opts.aiFieldKeys) cmd += ` --aiFieldKeys ${opts.aiFieldKeys}`;
-      if (opts.logic) cmd += ` --logic "${opts.logic}"`;
+      if (opts.logic) cmd += ` --logic "${escapeArg(opts.logic)}"`;
       if (opts.backgroundColor) cmd += ` --backgroundColor ${opts.backgroundColor}`;
       if (opts.roundCorner !== undefined) cmd += ` --roundCorner ${opts.roundCorner}`;
       if (opts.fillColor) cmd += ` --fillColor ${opts.fillColor}`;
@@ -376,7 +371,7 @@ export function registerReportCommand(parent: Command): void {
     .option('--fontSize <n>', 'Font size px', parseInt)
     .option('--bold [value]', 'Bold text')
     .action(async (opts) => {
-      let cmd = `assess report widget logic add --app ${opts.app} --page ${opts.page} --id ${opts.id} --content "${opts.content}"`;
+      let cmd = `assess report widget logic add --app ${opts.app} --page ${opts.page} --id ${opts.id} --content "${escapeArg(opts.content)}"`;
       if (opts.min !== undefined) cmd += ` --min ${opts.min}`;
       if (opts.max !== undefined) cmd += ` --max ${opts.max}`;
       if (opts.backgroundColor) cmd += ` --backgroundColor ${opts.backgroundColor}`;

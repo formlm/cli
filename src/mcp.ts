@@ -3,19 +3,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { execCommand, authLogin, authMe } from './exec.js';
 import { addProfile, getActiveProfile, getBaseUrl } from './config.js';
+import { VERSION } from './version.js';
+import { escapeArg } from './utils.js';
 
-// ── Helper: escape user input for embedding in CLI command strings ──────────
-// tokenizeCommand (server-side PipelineFilterCommand) supports \" as escaped
-// double-quote inside a quoted arg. Backslashes must also be escaped first.
-// Newlines / tabs are normalized to spaces since CLI commands must be single-line.
-function escapeArg(s: string): string {
-  return s
-    .replace(/\\/g, '\\\\')   // \ → \\  (must be first)
-    .replace(/"/g, '\\"')      // " → \"
-    .replace(/\r?\n|\r/g, ' ') // newlines → space
-    .replace(/\t/g, ' ')       // tabs → space
-    .trim();
-}
+// escapeArg now lives in ./utils.js (shared with commands/smart.ts) so that the
+// direct CLI and the MCP Server use a single, consistent escaping implementation.
 
 // ── Helper: format exec result as MCP text content ──────────────────────────
 function toText(r: { code: number; message: string; data: any }): string {
@@ -83,7 +75,7 @@ const TIMEOUT_STYLE    = 600_000;  // 10min for connect style apply/apply-all (A
 export async function startMcpServer(): Promise<void> {
   const server = new McpServer({
     name: 'formlm',
-    version: '0.2.0',
+    version: VERSION,
   });
 
   // ════════════════════════════════════════════════════════════════
@@ -237,7 +229,7 @@ export async function startMcpServer(): Promise<void> {
       'Example: "A workplace stress assessment for office workers with 3 dimensions (workload, autonomy, support), 15 questions, score 0-60, detailed result interpretation, dark professional style". ' +
       'Supports up to 8000 characters. If user pastes reference documents, include them here.'
     ),
-    planType: z.string().optional().describe(
+    planType: z.enum(['assessment', 'consultation', 'survey', 'exam', 'quiz', 'learn']).optional().describe(
       'Plan type. Choose based on user needs: ' +
       '"assessment" (scoring+report, for psych/workplace/health evaluations, MOST COMMON), ' +
       '"consultation" (scoring+report+AI expert chat, for mental health/coaching), ' +
@@ -254,7 +246,7 @@ export async function startMcpServer(): Promise<void> {
       '"轻松活泼" (lively playful, for quiz/education). ' +
       'Or custom: "深色科技风" / "warm friendly pastel" / "minimal clean white".'
     ),
-    questionCount: z.string().optional().describe(
+    questionCount: z.enum(['10-15', '15-20', '20-30']).optional().describe(
       'Target question count range: "10-15" (quick screening, 3-5 min), ' +
       '"15-20" (standard assessment, 5-8 min), ' +
       '"20-30" (deep assessment, 8-15 min). Default: auto-decided by AI based on planType.'
@@ -283,7 +275,12 @@ export async function startMcpServer(): Promise<void> {
     appId: z.string().describe('App ID'),
     module: z.string().optional().describe('Get only one module: form / scale / connect / report / expert / share (default: all 6)'),
   }, async (params) => {
-    const modules = params.module ? [params.module] : ['form', 'scale', 'connect', 'report', 'expert', 'share'];
+    const validModules = ['form', 'scale', 'connect', 'report', 'expert', 'share'];
+    const modules = params.module ? [params.module] : validModules;
+    // Validate module name early — prevent silent empty results
+    if (params.module && !validModules.includes(params.module)) {
+      return { content: [{ type: 'text' as const, text: `❌ Invalid module "${params.module}". Valid: ${validModules.join(', ')}` }] };
+    }
     const commands: Record<string, string> = {
       form:    `assess form query --app ${params.appId} --json`,
       scale:   `assess scale query --app ${params.appId} --json`,
@@ -337,7 +334,7 @@ export async function startMcpServer(): Promise<void> {
 
   // ── Tier 3: Direct Execution (Advanced) ──────────────────────────
   //
-  // Whitelisted command prefixes (first 3 tokens are checked):
+  // Whitelisted command prefixes (first 2 tokens are checked):
   //   assess app    : list / create / use / update / remove
   //   assess form   : query / find / types / config / add / update / remove / move / set-property
   //   assess scale  : query / find / add / update / set / remove / clear / config / keys / data
@@ -362,7 +359,7 @@ export async function startMcpServer(): Promise<void> {
       '  NEVER call a remove command based on a vague reference ("delete it", "remove that one")',
       '  without first resolving and confirming the exact target. Deletion is irreversible.',
       '',
-      'Whitelisted prefixes (3-token match):',
+      'Whitelisted prefixes (2-token match):',
       '  App:     assess app list/create/use/update/remove/urls',
       '  Form:    assess form query/find/types/config/add/update/remove/move/set-property',
       '  Scale:   assess scale query/find/add/update/set/remove/clear/config/keys/data',
@@ -388,9 +385,23 @@ export async function startMcpServer(): Promise<void> {
       'Add --json flag for structured output. Escape inner quotes with \\".'
     ),
   }, async (params) => {
+    // Defense-in-depth: enforce the documented whitelisted command prefixes
+    // before sending anything to the server. Prevents LLM hallucinations from
+    // issuing arbitrary commands and avoids wasteful network round-trips.
+    const head = params.command.trim().split(/\s+/).slice(0, 2).join(' ');
+    const allowedPrefixes = ['assess app', 'assess form', 'assess scale', 'assess connect', 'assess report', 'assess expert', 'assess share', 'assess smart', 'assess skill'];
+    if (!allowedPrefixes.includes(head)) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `❌ Command must start with one of the whitelisted prefixes (assess app/form/scale/connect/report/expert/share/smart/skill). Got: "${params.command.substring(0, 80)}"`,
+        }],
+      };
+    }
     // Use longer timeout for commands that trigger server-side AI generation
     const isStyleCmd = params.command.includes('connect style apply');
-    const timeout = isStyleCmd ? TIMEOUT_STYLE : TIMEOUT_DEFAULT;
+    const isSmartCmd = params.command.includes('smart generate');
+    const timeout = (isStyleCmd || isSmartCmd) ? TIMEOUT_STYLE : TIMEOUT_DEFAULT;
     const r = await execCommand(params.command, undefined, timeout);
     return { content: [{ type: 'text' as const, text: toText(r) }] };
   });
@@ -399,5 +410,5 @@ export async function startMcpServer(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('FormLM MCP Server v0.2.0 running on stdio (6 tools + 6 resources)');
+  console.error(`FormLM MCP Server v${VERSION} running on stdio (6 tools + 6 resources)`);
 }

@@ -21,9 +21,16 @@ export function registerSnapshotCommand(parent: Command): void {
     .option('--module <name>', 'Get only a specific module: form / scale / connect / report / expert / share (default: all)')
     .option('--md', 'Output all modules in Markdown format (token-efficient for AI, default: JSON)')
     .action(async (opts) => {
+      const validModules = ['form', 'scale', 'connect', 'report', 'expert', 'share'];
+      // Validate module name early — prevent silent empty snapshot
+      if (opts.module && !validModules.includes(opts.module)) {
+        console.error(`❌ Invalid module "${opts.module}". Valid: ${validModules.join(', ')}`);
+        process.exit(1);
+      }
+
       const modules = opts.module
         ? [opts.module]
-        : ['form', 'scale', 'connect', 'report', 'expert', 'share'];
+        : validModules;
 
       const format = opts.md ? '--md' : '--json';
 

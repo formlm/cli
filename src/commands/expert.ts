@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
 import { output } from '../output.js';
+import { escapeArg } from '../utils.js';
 
 export function registerExpertCommand(parent: Command): void {
   const expert = parent.command('expert').description('AI expert agent configuration (chatbot on final page)');
@@ -18,7 +19,7 @@ export function registerExpertCommand(parent: Command): void {
       let cmd = `assess expert query --app ${opts.app}`;
       if (opts.md) cmd += ' --md';
       if (opts.human) cmd += ' --human';
-      if (opts.filter) cmd += ` --filter "${opts.filter}"`;
+      if (opts.filter) cmd += ` --filter "${escapeArg(opts.filter)}"`;
       if (!opts.md && !opts.human) cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -52,18 +53,18 @@ export function registerExpertCommand(parent: Command): void {
     .requiredOption('--kbText <text>', 'Knowledge base text (required, max 500 chars, domain knowledge for this expert)')
     .action(async (opts) => {
       let cmd = `assess expert config --app ${opts.app}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
-      if (opts.role) cmd += ` --role "${opts.role}"`;
-      if (opts.description) cmd += ` --description "${opts.description}"`;
-      if (opts.style) cmd += ` --style "${opts.style}"`;
-      if (opts.prompt) cmd += ` --prompt "${opts.prompt}"`;
-      if (opts.welcome) cmd += ` --welcome "${opts.welcome}"`;
-      if (opts.question1) cmd += ` --question1 "${opts.question1}"`;
-      if (opts.question2) cmd += ` --question2 "${opts.question2}"`;
-      if (opts.question3) cmd += ` --question3 "${opts.question3}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
+      if (opts.role) cmd += ` --role "${escapeArg(opts.role)}"`;
+      if (opts.description) cmd += ` --description "${escapeArg(opts.description)}"`;
+      if (opts.style) cmd += ` --style "${escapeArg(opts.style)}"`;
+      if (opts.prompt) cmd += ` --prompt "${escapeArg(opts.prompt)}"`;
+      if (opts.welcome) cmd += ` --welcome "${escapeArg(opts.welcome)}"`;
+      if (opts.question1) cmd += ` --question1 "${escapeArg(opts.question1)}"`;
+      if (opts.question2) cmd += ` --question2 "${escapeArg(opts.question2)}"`;
+      if (opts.question3) cmd += ` --question3 "${escapeArg(opts.question3)}"`;
       if (opts.theme) cmd += ` --theme ${opts.theme}`;
       if (opts.enable !== undefined) cmd += ` --enable=${opts.enable === true || opts.enable === 'true'}`;
-      cmd += ` --kbText "${opts.kbText}"`;
+      cmd += ` --kbText "${escapeArg(opts.kbText)}"`;
       cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -77,7 +78,7 @@ export function registerExpertCommand(parent: Command): void {
     .requiredOption('--property <property>', 'Property path: name/role/description/style/welcome/prompt/question1/question2/question3/kbText/theme/enable')
     .requiredOption('--value <value>', 'New value')
     .action(async (opts) => {
-      const cmd = `assess expert set --app ${opts.app} --property ${opts.property} --value "${opts.value}" --json`;
+      const cmd = `assess expert set --app ${opts.app} --property ${opts.property} --value "${escapeArg(opts.value)}" --json`;
       output(await execCommand(cmd));
     });
 
@@ -90,7 +91,7 @@ export function registerExpertCommand(parent: Command): void {
     .requiredOption('--url <url>', 'Avatar image URL')
     .option('--enable [value]', 'Enable avatar display (true/false, default: false)')
     .action(async (opts) => {
-      let cmd = `assess expert avatar --app ${opts.app} --url ${opts.url}`;
+      let cmd = `assess expert avatar --app ${opts.app} --url "${escapeArg(opts.url)}"`;
       const e = opts.enable === true || opts.enable === 'true';
       cmd += ` --enable=${e}`;
       cmd += ' --json';
@@ -116,7 +117,7 @@ export function registerExpertCommand(parent: Command): void {
     .requiredOption('--app <appId>', 'App ID')
     .requiredOption('--input <text>', 'Message to send')
     .action(async (opts) => {
-      const cmd = `assess expert chat --app ${opts.app} --input "${opts.input}"`;
+      const cmd = `assess expert chat --app ${opts.app} --input "${escapeArg(opts.input)}"`;
       output(await execCommand(cmd));
     });
 }

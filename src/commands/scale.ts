@@ -1,12 +1,7 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
 import { output } from '../output.js';
-
-function normBool(v: unknown): boolean | undefined {
-  if (v === undefined) return undefined;
-  if (typeof v === 'boolean') return v;
-  return v === 'true' || v === '1';
-}
+import { escapeArg, normBool } from '../utils.js';
 
 export function registerScaleCommand(parent: Command): void {
   const scale = parent.command('scale').description('Scale dimensions, field associations & score ranges');
@@ -25,7 +20,7 @@ export function registerScaleCommand(parent: Command): void {
       let cmd = `assess scale query --app ${opts.app}`;
       if (opts.md) cmd += ' --md';
       if (opts.human) cmd += ' --human';
-      if (opts.filter) cmd += ` --filter "${opts.filter}"`;
+      if (opts.filter) cmd += ` --filter "${escapeArg(opts.filter)}"`;
       if (!opts.md && !opts.human) cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -39,7 +34,7 @@ export function registerScaleCommand(parent: Command): void {
     .action(async (opts) => {
       let cmd = `assess scale find --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
-      if (opts.filter) cmd += ` --filter "${opts.filter}"`;
+      if (opts.filter) cmd += ` --filter "${escapeArg(opts.filter)}"`;
       cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -55,10 +50,10 @@ export function registerScaleCommand(parent: Command): void {
     .option('--weight <weight>', 'Dimension weight', parseFloat)
     .option('--kbText <text>', 'Knowledge base text (required by server, max 500 chars)')
     .action(async (opts) => {
-      let cmd = `assess scale add --app ${opts.app} --id ${opts.id} --name "${opts.name}" --format ${opts.format}`;
+      let cmd = `assess scale add --app ${opts.app} --id ${opts.id} --name "${escapeArg(opts.name)}" --format ${opts.format}`;
       if (opts.direction) cmd += ` --direction ${opts.direction}`;
       if (opts.weight !== undefined) cmd += ` --weight ${opts.weight}`;
-      if (opts.kbText) cmd += ` --kbText "${opts.kbText}"`;
+      if (opts.kbText) cmd += ` --kbText "${escapeArg(opts.kbText)}"`;
       cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -75,11 +70,11 @@ export function registerScaleCommand(parent: Command): void {
     .option('--kbText <text>', 'Knowledge base text (max 500 chars)')
     .action(async (opts) => {
       let cmd = `assess scale update --app ${opts.app} --id ${opts.id}`;
-      if (opts.name) cmd += ` --name "${opts.name}"`;
+      if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.format) cmd += ` --format ${opts.format}`;
       if (opts.direction) cmd += ` --direction ${opts.direction}`;
       if (opts.weight !== undefined) cmd += ` --weight ${opts.weight}`;
-      if (opts.kbText) cmd += ` --kbText "${opts.kbText}"`;
+      if (opts.kbText) cmd += ` --kbText "${escapeArg(opts.kbText)}"`;
       cmd += ' --json';
       output(await execCommand(cmd));
     });
@@ -92,7 +87,7 @@ export function registerScaleCommand(parent: Command): void {
     .requiredOption('--property <property>', 'Property path (e.g. name, format, direction, data.<dataId>.value)')
     .requiredOption('--value <value>', 'New value')
     .action(async (opts) => {
-      const cmd = `assess scale set --app ${opts.app} --id ${opts.id} --property ${opts.property} --value "${opts.value}" --json`;
+      const cmd = `assess scale set --app ${opts.app} --id ${opts.id} --property ${opts.property} --value "${escapeArg(opts.value)}" --json`;
       output(await execCommand(cmd));
     });
 
@@ -209,12 +204,12 @@ export function registerScaleCommand(parent: Command): void {
     .option('--unique [value]', 'Unique display in enableSingle mode (true/false)')
     .action(async (opts) => {
       let cmd = `assess scale data add --app ${opts.app} --scale ${opts.scale}`;
-      if (opts.ranges) cmd += ` --ranges "${opts.ranges}"`;
+      if (opts.ranges) cmd += ` --ranges "${escapeArg(opts.ranges)}"`;
       if (opts.id) cmd += ` --id ${opts.id}`;
       if (opts.min !== undefined) cmd += ` --min ${opts.min}`;
       if (opts.max !== undefined) cmd += ` --max ${opts.max}`;
-      if (opts.value) cmd += ` --value "${opts.value}"`;
-      if (opts.desc) cmd += ` --desc "${opts.desc}"`;
+      if (opts.value) cmd += ` --value "${escapeArg(opts.value)}"`;
+      if (opts.desc) cmd += ` --desc "${escapeArg(opts.desc)}"`;
       const u = normBool(opts.unique);
       if (u !== undefined) cmd += ` --unique=${u}`;
       cmd += ' --json';
@@ -236,8 +231,8 @@ export function registerScaleCommand(parent: Command): void {
       let cmd = `assess scale data update --app ${opts.app} --scale ${opts.scale} --id ${opts.id}`;
       if (opts.min !== undefined) cmd += ` --min ${opts.min}`;
       if (opts.max !== undefined) cmd += ` --max ${opts.max}`;
-      if (opts.value) cmd += ` --value "${opts.value}"`;
-      if (opts.desc) cmd += ` --desc "${opts.desc}"`;
+      if (opts.value) cmd += ` --value "${escapeArg(opts.value)}"`;
+      if (opts.desc) cmd += ` --desc "${escapeArg(opts.desc)}"`;
       const u = normBool(opts.unique);
       if (u !== undefined) cmd += ` --unique=${u}`;
       cmd += ' --json';
