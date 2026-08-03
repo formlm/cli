@@ -35,6 +35,10 @@ export async function execCommand(
   const body = JSON.stringify({ cmd });
 
   return new Promise((resolve) => {
+    // settled 标志防止 timeout / error / end / close 之间重复 resolve
+    let settled = false;
+    const settle = (r: ExecResult) => { if (!settled) { settled = true; resolve(r); } };
+
     const mod = url.protocol === 'https:' ? https : http;
     const req = mod.request(url, {
       method: 'POST',
@@ -50,13 +54,13 @@ export async function execCommand(
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
-          resolve({
+          settle({
             code: parsed.code ?? 0,
             message: parsed.message ?? parsed.msg ?? 'ok',
             data: parsed.data ?? null,
           });
         } catch {
-          resolve({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
+          settle({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
         }
         // 释放 keep-alive socket，避免事件循环挂起导致进程无法退出
         res.destroy();
@@ -73,17 +77,24 @@ export async function execCommand(
           `2) use formlm_snapshot to check if partially generated, ` +
           `3) use formlm_exec to complete partial results.`
         : `Try again or simplify the command.`;
-      resolve({
+      settle({
         code: 408,
         message: `Request timed out after ${Math.round(timeoutMs / 1000)}s. ${hint}`,
         data: null,
       });
     });
 
+    // Error handler: 当 timeout 已 settle 则忽略后续 error（含 req.destroy() 产生的
+    // ECONNRESET）；否则（代理层提前断连等）正常 settle 错误，防止 Promise 永远挂起。
     req.on('error', (err) => {
-      // Ignore ECONNRESET caused by req.destroy() in timeout handler
-      if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return;
-      resolve({ code: 500, message: `Request failed: ${err.message}`, data: null });
+      if (settled) return;
+      settle({ code: 500, message: `Request failed: ${err.message}`, data: null });
+    });
+
+    // Safety net: 连接被对端关闭且未触发 error（如 nginx 静默断连 FIN），
+    // 防止 Promise 永不 resolve。
+    req.on('close', () => {
+      settle({ code: 500, message: 'Connection closed by server', data: null });
     });
 
     req.write(body);
@@ -101,6 +112,9 @@ export async function authLogin(email: string, password: string): Promise<ExecRe
   const body = JSON.stringify({ email, password: md5Password });
 
   return new Promise((resolve) => {
+    let settled = false;
+    const settle = (r: ExecResult) => { if (!settled) { settled = true; resolve(r); } };
+
     const mod = url.protocol === 'https:' ? https : http;
     const req = mod.request(url, {
       method: 'POST',
@@ -115,13 +129,13 @@ export async function authLogin(email: string, password: string): Promise<ExecRe
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
-          resolve({
+          settle({
             code: parsed.code ?? 0,
             message: parsed.message ?? parsed.msg ?? 'ok',
             data: parsed.data ?? null,
           });
         } catch {
-          resolve({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
+          settle({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
         }
         // 释放 keep-alive socket，避免事件循环挂起
         res.destroy();
@@ -130,13 +144,16 @@ export async function authLogin(email: string, password: string): Promise<ExecRe
 
     req.on('timeout', () => {
       req.destroy();
-      resolve({ code: 408, message: 'Auth request timed out after 30s', data: null });
+      settle({ code: 408, message: 'Auth request timed out after 30s', data: null });
     });
 
     req.on('error', (err) => {
-      // Ignore ECONNRESET caused by req.destroy() in timeout handler
-      if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return;
-      resolve({ code: 500, message: `Request failed: ${err.message}`, data: null });
+      if (settled) return;
+      settle({ code: 500, message: `Request failed: ${err.message}`, data: null });
+    });
+
+    req.on('close', () => {
+      settle({ code: 500, message: 'Connection closed by server', data: null });
     });
 
     req.write(body);
@@ -158,6 +175,9 @@ export async function authMe(profileName?: string): Promise<ExecResult> {
   const url = new URL('/api/v1/mcp/auth/me', baseUrl);
 
   return new Promise((resolve) => {
+    let settled = false;
+    const settle = (r: ExecResult) => { if (!settled) { settled = true; resolve(r); } };
+
     const mod = url.protocol === 'https:' ? https : http;
     const req = mod.request(url, {
       method: 'GET',
@@ -171,13 +191,13 @@ export async function authMe(profileName?: string): Promise<ExecResult> {
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
-          resolve({
+          settle({
             code: parsed.code ?? 0,
             message: parsed.message ?? parsed.msg ?? 'ok',
             data: parsed.data ?? null,
           });
         } catch {
-          resolve({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
+          settle({ code: 500, message: `Invalid response: ${data.substring(0, 200)}`, data: null });
         }
         // 释放 keep-alive socket，避免事件循环挂起
         res.destroy();
@@ -186,13 +206,16 @@ export async function authMe(profileName?: string): Promise<ExecResult> {
 
     req.on('timeout', () => {
       req.destroy();
-      resolve({ code: 408, message: 'Auth check timed out after 15s', data: null });
+      settle({ code: 408, message: 'Auth check timed out after 15s', data: null });
     });
 
     req.on('error', (err) => {
-      // Ignore ECONNRESET caused by req.destroy() in timeout handler
-      if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return;
-      resolve({ code: 500, message: `Request failed: ${err.message}`, data: null });
+      if (settled) return;
+      settle({ code: 500, message: `Request failed: ${err.message}`, data: null });
+    });
+
+    req.on('close', () => {
+      settle({ code: 500, message: 'Connection closed by server', data: null });
     });
 
     req.end();
