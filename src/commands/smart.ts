@@ -33,11 +33,13 @@ export function registerSmartCommand(parent: Command): void {
     .addOption(new Option('--plan-type <type>', 'Plan type').choices(['assessment', 'consultation', 'survey', 'exam', 'report', 'learn']))
     .option('--style <style>', 'Visual style preference')
     .addOption(new Option('--question-count <count>', 'Question count range').choices(['10-15', '15-20', '20-30']))
+    .option('--lang <lang>', 'BCP-47 language code (e.g. zh / zh-hant / zh-tw / en / ja). Injects an [OUTPUT LANGUAGE] directive that anchors AI output language for the plan AND every module execute — the only language entry point on the CLI/MCP channel (no Accept-Language header available there)')
     .action(async (opts) => {
       let cmd = `assess smart plan --input "${escapeArg(opts.input)}"`;
       if (opts.planType) cmd += ` --plan-type ${opts.planType}`;
       if (opts.style) cmd += ` --style "${escapeArg(opts.style)}"`;
       if (opts.questionCount) cmd += ` --question-count ${opts.questionCount}`;
+      if (opts.lang) cmd += ` --lang ${opts.lang}`;
       cmd += ' --json';
       const result = await execCommand(cmd, undefined, TIMEOUT_PLAN);
       output(result);

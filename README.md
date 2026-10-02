@@ -86,6 +86,7 @@ For a detailed step-by-step guide (including MCP setup for Claude Desktop / Curs
 ```bash
 formlm-cli auth login
 # or use a token directly
+# You can copy your token from Account > Personal Info page on the web app.
 formlm-cli auth login --token <your-token>
 ```
 
@@ -103,19 +104,30 @@ formlm-cli smart generate --input "Create a workplace stress assessment with 10 
 ### 3. Get All App URLs (after creating)
 
 ```bash
-# Get fill-in, editor, and data management URLs in one call
+# Get fill-in, editor, data management, and Data API URLs in one call
 formlm-cli app urls --app <appId>
-# Returns: shareUrl (fill-in), builderUrl (editor), dataUrl (data management)
+# Returns: shareUrl (fill-in), builderUrl (editor), dataUrl (data management),
+#          apiUrl (Data API endpoint, if enabled), apiHelpUrl (endpoint + ?help)
 ```
 
-### 4. Beautify Your Form (if using Direct Commands)
+### 4. Enable the Data API (form backend for any page)
+
+```bash
+# Turn a form into a data endpoint — static sites, local pages, and AI apps
+# can POST submissions straight to it (CORS enabled, no server needed)
+formlm-cli share api --app <appId> --submit true --query true
+# Then point your HTML form / fetch / curl at the returned endpoint.
+# Append ?help to the endpoint for its Markdown docs (readable by AI agents).
+```
+
+### 5. Beautify Your Form (if using Direct Commands)
 
 ```bash
 # Apply AI-generated visual style to all pages (takes 30-120s)
 formlm-cli connect style apply-all --app <appId> --look "职场压力评估，深蓝专业风格" --theme minimalist
 ```
 
-### 5. Direct Commands (for fine-grained control)
+### 6. Direct Commands (for fine-grained control)
 
 ```bash
 # Get a snapshot of all module states
@@ -142,7 +154,7 @@ formlm-cli expert query --app <appId>
 formlm-cli expert config --app <appId> --enableChat true
 ```
 
-### 6. Use as MCP Server
+### 7. Use as MCP Server
 
 ```bash
 formlm-cli mcp
@@ -328,7 +340,11 @@ formlm-cli share publish --app <appId>      # Publish (each respondent can submi
 formlm-cli share unpublish --app <appId>    # Unpublish
 formlm-cli share query --app <appId>        # Check publish status
 formlm-cli share url --app <appId>          # Get the shareable URL
+formlm-cli share api --app <appId>          # Configure the Data API (form backend endpoint)
+formlm-cli share api --app <appId> --submit true --query true --auto-create true
 ```
+
+The Data API turns a form into an HTTP data endpoint: `POST` JSON to the endpoint (or use the `/form` path for native HTML forms), read records back via the query endpoint, and hand the `?help` URL to an AI agent so it can discover the API on its own.
 
 ---
 
@@ -388,7 +404,7 @@ FormLM CLI works as a standard MCP Server over stdio and plugs into **any MCP-co
 
 Have questions, feedback, or need help getting started?
 
-📧 **[formlm.me@gmail.com](mailto:formlm.me@gmail.com)**
+📧 **[hello@formlm.me](mailto:hello@formlm.me)**
 
 Feel free to reach out — we're happy to help.
 

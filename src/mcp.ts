@@ -229,11 +229,19 @@ export async function startMcpServer(): Promise<void> {
       '"15-20" (standard assessment, 5-8 min), ' +
       '"20-30" (deep assessment, 8-15 min). Default: auto-decided by AI based on planType.'
     ),
+    lang: z.string().optional().describe(
+      'BCP-47 language code (e.g. "zh", "zh-hant", "zh-tw", "en", "ja"). Injects an [OUTPUT LANGUAGE] directive ' +
+      'that anchors AI output language for the plan AND every module execute. This is the only language entry point ' +
+      'on the MCP channel (no Accept-Language header available there) — without it, non-default-language apps drift ' +
+      '(e.g. zh-hant apps got Simplified Chinese page names and missed certificate pages). ' +
+      'Default: server default (Simplified Chinese).'
+    ),
   }, async (params) => {
     let cmd = `assess smart plan --input "${escapeArg(params.input)}"`;
     if (params.planType) cmd += ` --plan-type ${params.planType}`;
     if (params.style)    cmd += ` --style "${escapeArg(params.style)}"`;
     if (params.questionCount) cmd += ` --question-count ${params.questionCount}`;
+    if (params.lang)     cmd += ` --lang ${params.lang}`;
     cmd += ' --json';
     const r = await execCommand(cmd, undefined, TIMEOUT_PLAN);
     const text = formatGenerateResult(r);

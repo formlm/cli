@@ -40,7 +40,7 @@ export function registerShareCommand(parent: Command): void {
       const cmd = `assess share set --app ${opts.app} --form-type all --form-perm 1 --form-day 3650000 --json`;
       const result = await execCommand(cmd);
       output(result);
-      // After publishing, fetch and display all 3 URLs
+      // After publishing, fetch and display all URLs
       if (result.code === 0) {
         const urlsResult = await execCommand(`assess app urls --app ${opts.app} --json`);
         if (urlsResult.code === 0 && urlsResult.data) {
@@ -51,6 +51,7 @@ export function registerShareCommand(parent: Command): void {
             if (urls.shareUrl) console.log(`   Fill-in URL: ${urls.shareUrl}`);
             if (urls.builderUrl) console.log(`   Editor URL:  ${urls.builderUrl}`);
             if (urls.dataUrl) console.log(`   Data URL:    ${urls.dataUrl}`);
+            if (urls.apiUrl) console.log(`   Data API:    ${urls.apiUrl}`);
           } catch {}
         }
       }
@@ -67,6 +68,38 @@ export function registerShareCommand(parent: Command): void {
     });
 
   share
+    .command('api')
+    .description('Configure the Data API — a form backend for static sites, local pages, and AI apps. Point a form action or fetch at the endpoint and submissions land in FormLM. Append ?help to the endpoint for its Markdown docs (readable by AI agents).')
+    .requiredOption('--app <appId>', 'App ID')
+    .option('--submit <bool>', 'Enable the submit endpoint (true/false)')
+    .option('--query <bool>', 'Enable the query endpoint (true/false)')
+    .option('--summary <bool>', 'Enable the summary endpoint (true/false)')
+    .option('--auto-create <bool>', 'Auto-create fields for unknown keys in submissions (true/false)')
+    .action(async (opts) => {
+      let cmd = `assess share api --app ${opts.app}`;
+      if (opts.submit !== undefined) cmd += ` --submit ${opts.submit}`;
+      if (opts.query !== undefined) cmd += ` --query ${opts.query}`;
+      if (opts.summary !== undefined) cmd += ` --summary ${opts.summary}`;
+      if (opts.autoCreate !== undefined) cmd += ` --auto-create ${opts.autoCreate}`;
+      cmd += ' --json';
+      const result = await execCommand(cmd);
+      output(result);
+      // Friendly endpoint summary for humans and agents
+      if (result.code === 0 && result.data) {
+        try {
+          const api = JSON.parse(result.data);
+          if (api.apiUrl) {
+            console.log('');
+            console.log('🔌 Data API endpoint:');
+            console.log(`   POST JSON:  ${api.apiUrl}`);
+            console.log(`   POST form:  ${api.apiUrl}/form`);
+            console.log(`   API Docs:   ${api.apiHelpUrl}`);
+          }
+        } catch {}
+      }
+    });
+
+  share
     .command('query')
     .description('Query publish status')
     .requiredOption('--app <appId>', 'App ID')
@@ -78,7 +111,7 @@ export function registerShareCommand(parent: Command): void {
 
   share
     .command('url')
-    .description('Get all app URLs (fill-in, editor, data management)')
+    .description('Get all app URLs (fill-in, editor, data management, Data API)')
     .requiredOption('--app <appId>', 'App ID')
     .action(async (opts) => {
       // Use app urls to return all 3 URLs (fill-in, editor, data) in one call
