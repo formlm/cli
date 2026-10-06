@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
-import { output } from '../output.js';
+import { output, localFail } from '../output.js';
 import { escapeArg, normBool } from '../utils.js';
 
 export function registerReportCommand(parent: Command): void {
@@ -68,14 +68,30 @@ export function registerReportCommand(parent: Command): void {
 
   page
     .command('update')
-    .description('Update page properties (name, background color, style, SVG background). Auto-creates page if not found (upsert)')
+    .description('Update page properties (name, background color, style, SVG background). The server command is upsert (silently creates a blank page when --id does not exist), so this command verifies the page exists first — a typo\'d id fails instead of spawning a stray empty page. Use "page add" to create pages, or pass --upsert to opt into the raw upsert.')
     .requiredOption('--app <appId>', 'App ID')
     .requiredOption('--id <pageId>', 'Page ID')
     .option('--name <name>', 'Page name')
     .option('--backgroundColor <color>', 'Background color (hex)')
     .option('--style <css>', 'Extra CSS styles')
     .option('--bgSvg <svg>', 'SVG background image')
+    .option('--upsert', 'Allow the server to auto-create the page when --id is not found (legacy behaviour)')
     .action(async (opts) => {
+      // Guard against the upsert footgun: a wrong --id used to create a stray empty page.
+      if (!opts.upsert) {
+        const probe = await execCommand(`assess report query --app ${opts.app} --json`);
+        if (probe.code === 0 && probe.data) {
+          let pages: any[] = [];
+          try {
+            const parsed = JSON.parse(probe.data);
+            pages = Array.isArray(parsed) ? parsed : (parsed?.pages ?? []);
+          } catch { pages = []; }
+          if (pages.length > 0 && !pages.some((p: any) => p?.id === opts.id)) {
+            const known = pages.map((p: any) => `${p?.id}:${p?.name ?? ''}`).join(' | ');
+            localFail(`Report page '${opts.id}' not found. Existing pages: ${known}. Use "report page add" to create, or pass --upsert to auto-create.`);
+          }
+        }
+      }
       let cmd = `assess report page update --app ${opts.app} --id ${opts.id}`;
       if (opts.name) cmd += ` --name "${escapeArg(opts.name)}"`;
       if (opts.backgroundColor) cmd += ` --backgroundColor ${opts.backgroundColor}`;
@@ -87,11 +103,18 @@ export function registerReportCommand(parent: Command): void {
 
   page
     .command('remove')
-    .description('Remove a report page')
+    .description('Remove a report page (irreversible, drops all widgets on it). Locate by --id or by human-readable --name (exact match first, then unique substring).')
     .requiredOption('--app <appId>', 'App ID')
-    .requiredOption('--id <pageId>', 'Page ID')
+    .option('--id <pageId>', 'Page ID')
+    .option('--name <pageName>', 'Page name (used when --id omitted; resolved server-side)')
     .action(async (opts) => {
-      const cmd = `assess report page remove --app ${opts.app} --id ${opts.id} --json`;
+      if (!opts.id && !opts.name) {
+        localFail('Either --id <pageId> or --name "<page name>" is required for report page remove.');
+      }
+      let cmd = `assess report page remove --app ${opts.app}`;
+      if (opts.id) cmd += ` --id ${opts.id}`;
+      else cmd += ` --name "${escapeArg(opts.name)}"`;
+      cmd += ' --json';
       output(await execCommand(cmd));
     });
 
@@ -123,10 +146,12 @@ export function registerReportCommand(parent: Command): void {
   widget
     .command('types')
     .description('List all supported widget types')
-    .option('--app <appId>', 'App ID')
+    .option('--verbose', 'Show descriptions alongside type names')
     .action(async (opts) => {
+      // The server-side catalog command takes only --verbose; forwarding an app id here
+      // used to fail with "Unknown option '--app'".
       let cmd = 'assess report widget types';
-      if (opts.app) cmd += ` --app ${opts.app}`;
+      if (opts.verbose) cmd += ' --verbose';
       output(await execCommand(cmd));
     });
 
@@ -134,10 +159,8 @@ export function registerReportCommand(parent: Command): void {
     .command('config')
     .description('Get configurable properties for a widget type')
     .requiredOption('--type <type>', 'Widget type')
-    .option('--app <appId>', 'App ID')
     .action(async (opts) => {
-      let cmd = `assess report widget config --type ${opts.type}`;
-      if (opts.app) cmd += ` --app ${opts.app}`;
+      const cmd = `assess report widget config --type ${opts.type}`;
       output(await execCommand(cmd));
     });
 

@@ -12,7 +12,7 @@ export function registerProfileCommand(parent: Command): void {
     .option('--token <token>', 'Auth token')
     .action((opts) => {
       if (!opts.token) {
-        console.log('❌ --token is required. Get your token from FormLM website or run: formlm-cli auth login');
+        console.log('❌ --token is required. Copy your Access Token from formlm.me → Workspace → Account Settings');
         return;
       }
       const url = opts.url || getBaseUrl();

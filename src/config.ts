@@ -13,7 +13,7 @@ export interface Config {
   profiles: Profile[];
 }
 
-const CONFIG_DIR = path.join(os.homedir(), '.formlm');
+export const CONFIG_DIR = path.join(os.homedir(), '.formlm');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 export function loadConfig(): Config {

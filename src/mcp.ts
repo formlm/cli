@@ -1,10 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { execCommand, authLogin, authMe } from './exec.js';
+import { execCommand, authLogin, authLoginCode, authMe, authSendEmailCode, fetchCaptchaImage } from './exec.js';
 import { addProfile, getActiveProfile, getBaseUrl } from './config.js';
 import { VERSION } from './version.js';
 import { escapeArg } from './utils.js';
+import { buildSummary, shareTokenFromUrl } from './summary.js';
+import { runDoctor, isValidLangCode } from './doctor.js';
 
 // escapeArg now lives in ./utils.js (shared with commands/smart.ts) so that the
 // direct CLI and the MCP Server use a single, consistent escaping implementation.
@@ -42,9 +44,17 @@ function formatGenerateResult(r: { code: number; message: string; data: any }): 
           lines.push(`  ${t.seq}. [${t.skill}] ${t.title}`);
         }
         lines.push('');
-        lines.push('Next: Use formlm_execute to execute each module sequentially (plan is cached server-side):');
+        lines.push('Next: Use formlm_execute to execute each module sequentially (plan is cached server-side for ~10 minutes):');
         for (const t of parsed.tasks) {
           lines.push(`  formlm_execute: appId=${parsed.appId}, module=${t.skill}`);
+        }
+        // Coverage warning: plans other than consultation have no expert task, so callers
+        // must not assume an AI expert exists (pages advertising one would be dead links).
+        const done = parsed.tasks.map((t: any) => t.skill);
+        if (!done.includes('expert')) {
+          lines.push('');
+          lines.push(`⚠️ This plan has NO 'expert' module — smart execute --module expert will fail.`);
+          lines.push(`   Need an AI expert? Add it explicitly: formlm_exec "assess expert config --app ${parsed.appId} --name ... --role ... --kbText ... --json"`);
         }
       }
       return lines.join('\n');
@@ -58,10 +68,10 @@ function formatGenerateResult(r: { code: number; message: string; data: any }): 
 // ── MCP timeouts ─────────────────────────────────────────────────────────────
 // Most commands complete in < 5 seconds.
 // Smart pipeline (AssessAgent) takes 30-300 seconds.
-const TIMEOUT_DEFAULT  = 60_000;   // 60s for all direct CLI commands
-const TIMEOUT_PLAN     = 120_000;  // 2min for smart plan (Phase 1 only, ~10-30s)
-const TIMEOUT_EXECUTE  = 300_000;  // 5min for smart execute (single module, ~30-120s)
-const TIMEOUT_STYLE    = 600_000;  // 10min for connect style apply/apply-all (AI-generated styles can take 60-120s)
+const TIMEOUT_DEFAULT  = Number(process.env.FORMLM_TIMEOUT_MS) || 60_000;   // 60s for all direct CLI commands
+const TIMEOUT_PLAN     = Number(process.env.FORMLM_TIMEOUT_PLAN) || 120_000;  // 2min for smart plan (Phase 1 only, ~10-30s)
+const TIMEOUT_EXECUTE  = Number(process.env.FORMLM_TIMEOUT_EXECUTE) || 300_000; // 5min for smart execute (single module, ~30-120s)
+const TIMEOUT_STYLE    = Number(process.env.FORMLM_TIMEOUT_STYLE) || 600_000;  // 10min for connect style apply/apply-all (AI-generated styles can take 60-120s)
 
 export async function startMcpServer(): Promise<void> {
   const server = new McpServer({
@@ -83,8 +93,8 @@ export async function startMcpServer(): Promise<void> {
     scale:   'Scale dimension scoring — P0: range boundaries must be continuous (next.min = prev.max + 1), highest tier max must be 999, --kbText is required.',
     connect: 'Page styling & themes — P0: --theme must be one of 6 design modes (scenic/skeuomorphic/liquid/glassmorphism/immersive/minimalist). --look must include scenario + visual style description.',
     report:  'Report pages & widgets — P0: system variables use {{double braces}} e.g. {{TotalScore}}, logic conditions use actual score values (never percentages).',
-    expert:  'AI expert agent config — P0: "expert config" for full setup (requires --kbText), "expert set" only for single-property micro-adjustments. --kbText is required.',
-    share:   'Share & publish settings — share set command is naturally idempotent (safe to re-run). --form-type all --form-perm 1 --form-day 3650000 for standard public access.',
+    expert:  'AI expert agent config — P0: "expert config" for full setup (requires --name AND --kbText), "expert set --property <p> --value <v>" for single-property micro-adjustments (e.g. --property enable). NOTE: only consultation plans auto-generate an expert; assessment/exam plans do not — add one explicitly.',
+    share:   'Share & publish settings — share set command is naturally idempotent (safe to re-run). Access types: visitor = anonymous no-login ("anyone can fill", the usual public choice); all = every LOGGED-IN FormLM user (anonymous visitors hit the login page); secret = password; owner = creator only. Day rule: 1..30 finite, <=0 or >30 normalize to permanent (sentinel 3650000).',
   };
 
   for (const skillId of skillIds) {
@@ -109,13 +119,14 @@ export async function startMcpServer(): Promise<void> {
   }
 
   // ════════════════════════════════════════════════════════════════
-  //  MCP TOOLS — Layered Architecture (7 tools)
+  // MCP TOOLS — Layered Architecture (9 tools)
   //
   //  Recommended workflow (smart pipeline):
   //    1. auth_login → authenticate
   //    2. formlm_generate → generate plan (Phase 1, ~10-30s)
   //    3. formlm_execute → execute each module sequentially (form→scale→connect→report→expert→share)
-  //    4. formlm_snapshot → verify the app
+  //    4. formlm_doctor → verify quality (share access / expert / language / coverage)
+  //       (formlm_snapshot → full or --summary state when you need the raw modules)
   //    5. formlm_exec → fine-grained modifications (advanced)
   // ════════════════════════════════════════════════════════════════
 
@@ -123,15 +134,28 @@ export async function startMcpServer(): Promise<void> {
 
   server.tool('auth_login',
     [
-      'Login to FormLM with a token or email + password.',
+      'Login to FormLM. Three methods, in order of preference:',
+      '',
+      '1. Access Token (recommended): ask the user to copy it from',
+      '   formlm.me → Workspace → Account Settings → Access Token → Copy, then pass it as `token`.',
+      '',
+      '2. Email verification code (no password needed, fully in-chat, works for ALL accounts):',
+      '   a. Call auth_email_code { email } — returns a captcha image (show it to the user)',
+      '   b. Ask the user to read the 4 digits from the image, then call auth_email_code { email, captcha }',
+      '   c. A 6-digit code is emailed to the user (valid 5 minutes) — ask them for it',
+      '   d. Call this tool with { email, code }',
+      '',
+      '3. email + password: only for accounts that HAVE set a password.',
+      '   Accounts registered via email verification code or Google have NO password.',
+      '   If password login fails with 401/403, do NOT retry — switch to method 1 or 2.',
       '',
       'IMPORTANT: At the START of any FormLM session (before calling formlm_generate/formlm_exec),',
-      'call auth_status first. If not logged in, call this tool immediately — ask the user for their email + password',
-      '(easiest, no browser needed) or a token. Do NOT wait for a 401 error before authenticating.',
+      'call auth_status first. If not logged in, authenticate immediately. Do NOT wait for a 401 error.',
     ].join('\n'), {
-    token: z.string().optional().describe('Auth token (get it from formlm.me → DevTools → Cookies → Authorization)'),
-    email: z.string().optional().describe('Account email (use together with password)'),
-    password: z.string().optional().describe('Account password (use together with email)'),
+    token: z.string().optional().describe('Access token from formlm.me → Workspace → Account Settings → Access Token → Copy'),
+    email: z.string().optional().describe('Account email (use with `code` for verification-code login, or with `password`)'),
+    code: z.string().optional().describe('Email verification code (6 digits, valid 5 min) — request it via auth_email_code first'),
+    password: z.string().optional().describe('Account password (use together with email; verification-code/Google accounts have no password)'),
   }, async (params) => {
     if (params.token) {
       addProfile({ name: 'default', url: getBaseUrl(), token: params.token, active: true });
@@ -142,6 +166,21 @@ export async function startMcpServer(): Promise<void> {
       }
       return { content: [{ type: 'text' as const, text: `⚠️ Token saved but verification failed: ${result.message}` }] };
     }
+    if (params.email && params.code) {
+      const result = await authLoginCode(params.email, params.code);
+      if (result.code === 0 && result.data) {
+        const token = typeof result.data === 'string' ? result.data : (result.data as any).token || '';
+        addProfile({ name: 'default', url: getBaseUrl(), token, active: true });
+        return { content: [{ type: 'text' as const, text: '✅ Login successful!' }] };
+      }
+      if (result.code === 403) {
+        return { content: [{ type: 'text' as const, text: '❌ Invalid or expired verification code. The code is valid for 5 minutes — ask the user to double-check it and retry. If it expired, call auth_email_code again (new captcha → new code). If the account reports 429, it is locked for 30 minutes after 5 failed attempts — wait and retry later.' }] };
+      }
+      if (result.code === 429) {
+        return { content: [{ type: 'text' as const, text: '❌ Too many attempts — rate limited. Wait a minute, then request a fresh code via auth_email_code.' }] };
+      }
+      return { content: [{ type: 'text' as const, text: `❌ Login failed: ${result.message}` }] };
+    }
     if (params.email && params.password) {
       const result = await authLogin(params.email, params.password);
       if (result.code === 0 && result.data) {
@@ -149,22 +188,74 @@ export async function startMcpServer(): Promise<void> {
         addProfile({ name: 'default', url: getBaseUrl(), token, active: true });
         return { content: [{ type: 'text' as const, text: '✅ Login successful!' }] };
       }
-      return { content: [{ type: 'text' as const, text: `❌ Login failed: ${result.message}` }] };
+      return { content: [{ type: 'text' as const, text: `❌ Login failed: ${result.message}\nHint: accounts registered via email verification code or Google have no password. Use the token method (Account Settings → Access Token) or email verification code (auth_email_code) instead.` }] };
     }
-    return { content: [{ type: 'text' as const, text: '❌ Either token or both email and password are required.' }] };
+    return { content: [{ type: 'text' as const, text: '❌ Provide `token`, or `email` + `code`, or `email` + `password`. Recommended: ask the user for the Access Token (formlm.me → Workspace → Account Settings), or start an email verification-code login via auth_email_code.' }] };
   });
 
-  server.tool('auth_status', 'Check current login status', {}, async () => {
+  server.tool('auth_email_code',
+    [
+      'Request an email verification code for FormLM login (part of auth_login method 2 — no password needed).',
+      '',
+      'Two-step usage:',
+      '1. Call WITHOUT `captcha` → returns a captcha image. Show it to the user and ask them to read the 4 digits.',
+      '   (The image is a human-verification gate — you cannot solve it yourself; the user must read it.)',
+      '2. Call WITH `captcha` (the 4 digits) → if correct, a 6-digit code is emailed to the user (valid 5 minutes).',
+      '   Then ask the user for that code and call auth_login with { email, code }.',
+      '',
+      'Server rate limits (anti-abuse): 1 send per email per 60s, 10 sends per IP per minute.',
+      'On 429, tell the user to wait a minute. On 403, the digits were wrong — fetch a fresh image and try once more.',
+    ].join('\n'), {
+    email: z.string().describe('Account email (the verification code will be sent here)'),
+    captcha: z.string().optional().describe('The 4 digits the user read from the captcha image (omit on first call to get the image)'),
+  }, async (params) => {
+    if (!params.captcha) {
+      const cap = await fetchCaptchaImage(params.email);
+      if (!cap.ok || !cap.image) {
+        return { content: [{ type: 'text' as const, text: `❌ Failed to fetch captcha image: ${cap.message}` }] };
+      }
+      const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+        {
+          type: 'image',
+          data: cap.image.toString('base64'),
+          mimeType: 'image/gif',
+        },
+        {
+          type: 'text',
+          text: '👆 Captcha image (valid 60s). Show it to the user and ask them to read the 4 digits, then call auth_email_code again with { email, captcha }. If this client cannot display images, run `formlm-cli auth login` in a terminal instead (option 2 saves the image to ~/.formlm/captcha.gif and opens it).',
+        },
+      ];
+      return { content };
+    }
+    const send = await authSendEmailCode(params.email, params.captcha);
+    if (send.code === 200) {
+      return { content: [{ type: 'text' as const, text: `✅ Verification code sent to ${params.email}. Ask the user to check their inbox (and spam folder) and give you the 6-digit code (valid 5 minutes), then call auth_login with { email, code }.` }] };
+    }
+    if (send.code === 403) {
+      return { content: [{ type: 'text' as const, text: '❌ Wrong captcha digits. Call auth_email_code again WITHOUT captcha to get a fresh image, and ask the user to read it once more.' }] };
+    }
+    if (send.code === 429) {
+      return { content: [{ type: 'text' as const, text: '❌ Rate limited (1 send per email per 60s, 10 per IP per minute). Ask the user to wait a minute, then request a fresh captcha image.' }] };
+    }
+    return { content: [{ type: 'text' as const, text: `❌ Failed to send code: ${send.message}` }] };
+  });
+
+  server.tool('auth_status',
+    [
+      'Check current login status.',
+      'Tokens expire after 7 days — if this returns "Token invalid (expired)", ask the user to copy a fresh',
+      'Access Token from formlm.me → Workspace → Account Settings and re-login via auth_login.',
+    ].join('\n'), {}, async () => {
     const profile = getActiveProfile();
     if (!profile) {
-      return { content: [{ type: 'text' as const, text: '❌ Not logged in. Use auth_login to authenticate.' }] };
+      return { content: [{ type: 'text' as const, text: '❌ Not logged in. Use auth_login to authenticate (recommended: Access Token from formlm.me → Workspace → Account Settings).' }] };
     }
     const result = await authMe();
     if (result.code === 0) {
       const userInfo = typeof result.data === 'object' ? (result.data as any).userName : result.data;
       return { content: [{ type: 'text' as const, text: `✅ Logged in. Server: ${profile.url}\nUser: ${userInfo}` }] };
     }
-    return { content: [{ type: 'text' as const, text: `❌ Token invalid: ${result.message}` }] };
+    return { content: [{ type: 'text' as const, text: `❌ Token invalid: ${result.message}\nTokens expire after 7 days. Ask the user to copy a fresh Access Token from formlm.me → Workspace → Account Settings, then re-login via auth_login.` }] };
   });
 
   // ── Tier 1: Smart Pipeline (Natural Language → Plan + Sequential Execute) ─
@@ -177,6 +268,8 @@ export async function startMcpServer(): Promise<void> {
       'Generate an execution plan from natural language description (Phase 1 only — does NOT execute any module).',
       'Server runs: Plan AI (assess-plan.md) → generates task list for 6 modules (form/scale/connect/report/expert/share).',
       'Returns: appId, planType, name, plan JSON, and task list. Takes ~10-30 seconds.',
+      'This tool is plan-only — the name "generate" predates the split. There is no single call that produces a live app;',
+      'that is generate → execute×N (or the CLI `formlm-cli smart generate` wrapper).',
       '',
       '## Scene Templates (when user description is vague, present these and ask them to choose):',
       '1. assessment: 评估量表 — 多维度打分 + 分值区间解读报告 (MOST COMMON, for psych/workplace/health)',
@@ -187,8 +280,14 @@ export async function startMcpServer(): Promise<void> {
       '6. learn: 学习卡片 — 知识点 + 自测题 (for micro-learning)',
       '',
       '## AFTER SUCCESS — execute modules sequentially via formlm_execute:',
-      'The plan is cached server-side — just call formlm_execute with appId and module for each module.',
+      'The plan is cached server-side (~10 min TTL) — just call formlm_execute with appId and module for each module.',
       'No need to pass the plan JSON back — it is handled automatically.',
+      'IMPORTANT: module coverage depends on planType. Only `consultation` plans include the `expert` module;',
+      'assessment / exam / report / survey / learn plans do NOT. If the app must have an AI expert, create it',
+      'explicitly afterwards with formlm_exec: "assess expert config --app <id> --name ... --role ... --kbText ..."',
+      '(otherwise the published page promises an expert the app does not have — silent functional gap).',
+      'After the ~10 min cache expires, formlm_execute still works if you pass the plan JSON back via `plan`',
+      '(the full plan is returned in this tool\'s output) — re-running this tool would create a NEW app instead.',
       '',
       '## USER FEEDBACK (IMPORTANT for good UX):',
       'After getting the plan, tell the user: "✅ 计划已生成！" and list the modules.',
@@ -196,7 +295,7 @@ export async function startMcpServer(): Promise<void> {
       'After each call, tell the user the module is done.',
       'After the last module (share), the 3 app URLs are returned automatically — present them to the user.',
       '',
-      'After all modules are executed, use formlm_snapshot to verify the app.',
+      'After all modules are executed, use formlm_doctor to verify quality (and formlm_snapshot for raw state).',
       '',
       '## Reference Documents:',
       'If the user has reference documents (questionnaire files, scoring criteria), ask them to paste the content',
@@ -224,10 +323,21 @@ export async function startMcpServer(): Promise<void> {
       '"轻松活泼" (lively playful, for exam/learn scenarios). ' +
       'Or custom: "深色科技风" / "warm friendly pastel" / "minimal clean white".'
     ),
-    questionCount: z.enum(['10-15', '15-20', '20-30']).optional().describe(
-      'Target question count range: "10-15" (quick screening, 3-5 min), ' +
+    questionCount: z.enum(['5-9', '10-15', '15-20', '20-30', '30-50', '50-100']).optional().describe(
+      'Target question count range: "5-9" (micro check-in, ~2 min), '
+      + '"10-15" (quick screening, 3-5 min), ' +
       '"15-20" (standard assessment, 5-8 min), ' +
-      '"20-30" (deep assessment, 8-15 min). Default: auto-decided by AI based on planType.'
+      '"20-30" (deep assessment, 8-15 min), ' +
+      '"30-50" (facet-level), "50-100" (full inventory). Default: auto-decided by AI based on planType.'
+    ),
+    dimensions: z.string().optional().describe(
+      'PIN the scoring dimensions (names and count) instead of letting the Plan AI invent them — separate with | or ; ' +
+      '(e.g. "Natural Finish|Glam Intensity|Editorial|Color Confidence"). Use whenever an external page/ledger already ' +
+      'names the dimensions: unpinned dimensions get renamed/recounted by the AI and every dependent page needs rework.'
+    ),
+    appName: z.string().optional().describe(
+      'PIN the app display name (default: chosen by the Plan AI). Use for batch creation when the caller must know the ' +
+      'exact name up front to map apps to pages/ledgers.'
     ),
     lang: z.string().optional().describe(
       'BCP-47 language code (e.g. "zh", "zh-hant", "zh-tw", "en", "ja"). Injects an [OUTPUT LANGUAGE] directive ' +
@@ -241,6 +351,8 @@ export async function startMcpServer(): Promise<void> {
     if (params.planType) cmd += ` --plan-type ${params.planType}`;
     if (params.style)    cmd += ` --style "${escapeArg(params.style)}"`;
     if (params.questionCount) cmd += ` --question-count ${params.questionCount}`;
+    if (params.dimensions) cmd += ` --dimensions "${escapeArg(params.dimensions)}"`;
+    if (params.appName) cmd += ` --app-name "${escapeArg(params.appName)}"`;
     if (params.lang)     cmd += ` --lang ${params.lang}`;
     cmd += ' --json';
     const r = await execCommand(cmd, undefined, TIMEOUT_PLAN);
@@ -267,15 +379,29 @@ export async function startMcpServer(): Promise<void> {
       'After the last module (share), present the 3 URLs to the user.',
       '',
       '## PLAN PASSING:',
-      'Plan is cached server-side after formlm_generate — no need to pass it manually.',
+      'Plan is cached server-side (~10 min) after formlm_generate — no need to pass it manually.',
       'Just call formlm_execute with appId and module for each module in sequence.',
+      'If you get "Plan not found in server cache", pass the plan JSON from the formlm_generate output into `plan`',
+      '— do NOT re-run formlm_generate (that creates a brand-new app).',
+      'Success is structured: the response carries appId / module / taskStatus / status(success|error) — trust taskStatus,',
+      'not human wording. A retried `scale` execute appends dimensions unless existing ones are cleared first',
+      '(formlm_exec: "assess scale clear --app <id>").',
     ].join('\n'), {
     appId: z.string().describe('App ID from formlm_generate result'),
     module: z.string().describe('Module to execute: form / scale / connect / report / expert / share'),
-    plan: z.string().optional().describe('Plan JSON (optional — plan is cached server-side after formlm_generate)'),
+    plan: z.string().optional().describe('Full plan JSON (optional — the plan is cached server-side for ~10 min after formlm_generate; pass this only to resume after the cache expired)'),
   }, async (params) => {
     let cmd = `assess smart execute --app ${params.appId} --module ${params.module}`;
-    if (params.plan) cmd += ` --plan "${escapeArg(params.plan)}"`;
+    if (params.plan) {
+      // Same transport contract as the CLI: plan goes as Base64 in ONE token. Inline JSON is
+      // cut apart by the server command preprocessor (task text contains ", assess ..." or ";"),
+      // which silently replaces the plan with unrelated sub-commands.
+      try {
+        cmd += ` --plan-b64 ${Buffer.from(JSON.stringify(JSON.parse(params.plan)), 'utf-8').toString('base64')}`;
+      } catch {
+        return { content: [{ type: 'text' as const, text: '❌ `plan` is not valid JSON — pass the full plan object returned by formlm_generate (its "plan" field).' }] };
+      }
+    }
     cmd += ' --json';
     const r = await execCommand(cmd, undefined, TIMEOUT_EXECUTE);
 
@@ -305,7 +431,11 @@ export async function startMcpServer(): Promise<void> {
             const urls = JSON.parse(urlResult.data || urlResult.message);
             lines.push('');
             lines.push('🎉 All modules complete! Your app is ready:');
-            if (urls.shareUrl) lines.push(`🔗 Fill-in URL: ${urls.shareUrl}`);
+            if (urls.shareUrlAbsolute || urls.shareUrl) lines.push(`🔗 Fill-in URL: ${urls.shareUrlAbsolute || urls.shareUrl}`);
+            // shareToken is a first-class field server-side; fall back to URL extraction for older servers
+            const token = urls.shareToken || shareTokenFromUrl(urls.shareUrl);
+            if (token) lines.push(`🔑 ShareToken:   ${token}`);
+            if (urls.shareType) lines.push(`🌐 Access type:  ${urls.shareType}${urls.shareDay >= 3650000 ? ' (permanent)' : ''}${urls.shareType === 'all' ? ' — requires login!' : ''}`);
             if (urls.builderUrl) lines.push(`🎨 Editor URL: ${urls.builderUrl}`);
             if (urls.dataUrl) lines.push(`📊 Data URL: ${urls.dataUrl}`);
             lines.push('');
@@ -342,9 +472,16 @@ export async function startMcpServer(): Promise<void> {
       '',
       'Call this BEFORE making changes to understand what already exists.',
       'Call this AFTER formlm_generate to verify the generated app.',
+      '',
+      'Prefer summary=true for batch audits / consistency checks: it returns a compact profile',
+      '(appName, fieldCount, questionCount, dimCount+dimNames, reportPageCount+reportPages,',
+      'styled, expertEnabled/expertHasContent, share.type/perm/day/forever/shareToken) instead of',
+      'the full module payloads, so you do not have to parse widget layoutData or markdown tables.',
+      'If any module fetch fails the result carries _errors/_degraded — treat it as UNKNOWN, not as "empty module".',
     ].join('\n'), {
     appId: z.string().describe('App ID'),
     module: z.string().optional().describe('Get only one module: form / scale / connect / report / expert / share (default: all 6)'),
+    summary: z.boolean().optional().describe('Return the compact audit profile instead of full module payloads (recommended for batch verification)'),
   }, async (params) => {
     const validModules = ['form', 'scale', 'connect', 'report', 'expert', 'share'];
     const modules = params.module ? [params.module] : validModules;
@@ -362,27 +499,95 @@ export async function startMcpServer(): Promise<void> {
     };
 
     const entries = modules.filter((m) => commands[m]);
-    const results = await Promise.all(
-      entries.map((m) => execCommand(commands[m], undefined, TIMEOUT_DEFAULT).then((r) => [m, r] as const))
-    );
+    // App title is not part of any module payload — fetch it in parallel for name↔page audits
+    const [results, appResult] = await Promise.all([
+      Promise.all(
+        entries.map((m) => execCommand(commands[m], undefined, TIMEOUT_DEFAULT).then((r) => [m, r] as const))
+      ),
+      execCommand(`assess app use --app ${params.appId} --json`, undefined, TIMEOUT_DEFAULT),
+    ]);
 
-    const snapshot: Record<string, unknown> = { appId: params.appId };
+    let appName = '';
+    if (appResult.code === 0 && appResult.data) {
+      try { appName = (typeof appResult.data === 'string' ? JSON.parse(appResult.data) : appResult.data)?.name || ''; } catch {}
+    }
+
+    const snapshot: Record<string, unknown> = { appId: params.appId, appName: appName || null };
     const errors: string[] = [];
+    const parsedMods: Record<string, any> = {};
 
     for (const [module, result] of results) {
       if (result.code === 0) {
         // All modules now use --json, so parse uniformly
-        try { snapshot[module] = JSON.parse(result.data); }
-        catch { snapshot[module] = result.data || result.message; }
+        try { snapshot[module] = JSON.parse(result.data); parsedMods[module] = snapshot[module]; }
+        catch { snapshot[module] = result.data || result.message; parsedMods[module] = null; }
       } else {
+        // Partial-failure visibility so auditors never read a fetch error as "module is empty"
         snapshot[module] = null;
-        errors.push(`${module}: ${result.message}`);
+        snapshot['_degraded'] = true;
+        errors.push(`${module}: [${result.code}] ${result.message}`);
       }
     }
 
     if (errors.length > 0) snapshot['_errors'] = errors;
 
+    if (params.summary) {
+      const summary = buildSummary(params.appId, appName, parsedMods);
+      if (errors.length > 0) {
+        summary['_errors'] = errors;
+        summary['_degraded'] = true;
+        // Zero counts from a failed read are UNKNOWNS — say so, or batch auditors report
+        // "app has 0 fields / not published" for apps that were simply unreachable.
+        if (Object.values(parsedMods).every(v => v === null)) {
+          summary['_note'] = 'All module reads failed — the zero counts are UNKNOWNS, not empty state. Retry before concluding.';
+        }
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(summary) }] };
+    }
+
     return { content: [{ type: 'text' as const, text: JSON.stringify(snapshot, null, 2) }] };
+  });
+
+  server.tool('formlm_doctor',
+    [
+      'Read-only quality inspection of ONE app — the fastest way to verify a generated app before wiring it into a page.',
+      'Returns {ok, failCount, warnCount, summary, findings[]} where each finding is {name, level(pass|warn|fail), detail, fix?}.',
+      '',
+      'Checks: content/scoring coverage, expert enabled-but-empty or referenced-but-missing (dead AI assistant),',
+      'styling applied, dimensions without report pages, unexpected certificate page, share access semantics',
+      '(type=all/owner = login required — anonymous respondents get the login page, NOT the form), link expiry,',
+      'and fill-in URL reachability.',
+      'Set expectLang (e.g. "en", "zh-hant") to catch text written in the wrong script — the classic batch defect',
+      'where an English app ends up with Chinese certificate/report boilerplate. Use deep=true to also scan report',
+      'widget BODY text (extra queries; titles/labels are always scanned).',
+      '',
+      'Read-only: this tool never writes. Apply the returned `fix` commands via formlm_exec.',
+    ].join('\n'), {
+    appId: z.string().describe('App ID'),
+    expectLang: z.string().optional().describe('BCP-47 expected language, e.g. "en" / "zh" / "zh-hant" / "ja". Enables the script-consistency scan.'),
+    deep: z.boolean().optional().describe('Also fetch and scan report widget body text (slower, more accurate language check)'),
+    probe: z.boolean().optional().describe('Probe the fill-in URL for reachability (default true)'),
+  }, async (params) => {
+    if (params.expectLang && !isValidLangCode(params.expectLang)) {
+      return { content: [{ type: 'text' as const, text: `❌ Invalid expectLang "${params.expectLang}". Use a BCP-47 code like en / zh / zh-hant / ja.` }] };
+    }
+    const report = await runDoctor(params.appId, {
+      expectLang: params.expectLang,
+      deep: !!params.deep,
+      probe: params.probe !== false,
+    });
+    const lines: string[] = [];
+    lines.push(report.ok
+      ? `✅ Doctor passed (${report.warnCount} warning(s)) — ${report.appName || report.appId}`
+      : `❌ Doctor found ${report.failCount} blocking issue(s), ${report.warnCount} warning(s) — ${report.appName || report.appId}`);
+    for (const f of report.findings) {
+      const icon = f.level === 'pass' ? '✅' : f.level === 'warn' ? '⚠️ ' : '❌';
+      lines.push(`${icon} ${f.name}: ${f.detail}`);
+      if (f.fix) lines.push(`    ↳ fix: ${f.fix}`);
+    }
+    lines.push('');
+    lines.push('Compact summary: ' + JSON.stringify(report.summary));
+    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
   });
 
   server.tool('formlm_skill',
@@ -405,16 +610,19 @@ export async function startMcpServer(): Promise<void> {
 
   // ── Tier 3: Direct Execution (Advanced) ──────────────────────────
   //
-  // Whitelisted command prefixes (first 2 tokens are checked):
-  //   assess app    : list / create / use / update / remove
+  // Whitelisted commands — server granularity is 3 tokens (McpV1Api.ALLOWED_SUBCOMMANDS):
+  //   assess app    : list / create / use / current / update / remove / urls
   //   assess form   : query / find / types / config / add / update / remove / move / set-property
   //   assess scale  : query / find / add / update / set / remove / clear / config / keys / data
   //   assess connect: query / find / types / config / cover-page / final-page / main-page / style
-  //   assess report : query / find / update / page / widget / logic
+  //   assess report : query / find / update / page / widget (widget carries the `logic` sub-command)
   //   assess expert : query / find / config / set / avatar / remove / chat
-  //   assess share  : set / query / url
+  //   assess share  : set / query / url / api / flavor
   //   assess smart  : plan / execute
   //   assess skill  : form / scale / connect / report / expert / share
+  // NOTE: `snapshot` and `field ...` are CLIENT-side synthesized CLI commands (they fan out
+  // to `assess <module> query`), so "assess snapshot" / "assess field list" are not on this
+  // channel and return 403 by design — use the formlm_snapshot tool or the module queries.
 
   server.tool('formlm_exec',
     [
@@ -430,26 +638,32 @@ export async function startMcpServer(): Promise<void> {
       '  NEVER call a remove command based on a vague reference ("delete it", "remove that one")',
       '  without first resolving and confirming the exact target. Deletion is irreversible.',
       '',
-      'Whitelisted prefixes (2-token match):',
-      '  App:     assess app list/create/use/update/remove/urls',
+      'Whitelisted commands (3-token granularity; anything else returns 403):',
+      '  App:     assess app list/create/use/current/update/remove/urls',
       '  Form:    assess form query/find/types/config/add/update/remove/move/set-property',
       '  Scale:   assess scale query/find/add/update/set/remove/clear/config/keys/data',
       '  Connect: assess connect query/find/types/config/cover-page/final-page/main-page/style',
-      '  Report:  assess report query/find/update/page/widget/logic',
+      '  Report:  assess report query/find/update/page/widget  (conditional rules: assess report widget logic add/list/remove)',
       '  Expert:  assess expert query/find/config/set/avatar/remove/chat',
-      '  Share:   assess share set/query/url',
+      '  Share:   assess share set/query/url/api/flavor',
       '  Smart:   assess smart plan/execute',
+      '  Skill:   assess skill form/scale/connect/report/expert/share',
+      '  NOT available here: assess snapshot / assess field * (CLI-only wrappers of the module queries)',
       '',
       'Common patterns:',
-      '  "assess app list --json"                                                                    (discover appId by name)',
-      '  "assess app urls --app <id> --json"                                                         (get fill-in/editor/data URLs)',
+      '  "assess app list --all --with-urls --json"                                                     (full inventory incl. shareToken per app)',
+      '  "assess app urls --app <id> --json"                                                            (URLs + published/shareType/shareToken)',
       '  "assess form add --app <id> --id q1 --name \\"Name\\" --type radio --options \\"A:1,B:2,C:3\\" --json"',
       '  "assess scale add --app <id> --id stress --name \\"Stress\\" --format sum --kbText \\"...\\" --json"',
       '  "assess scale keys add --app <id> --scale stress --fields X1,X2,X3 --json"',
-      '  "assess scale data add --app <id> --scale stress --ranges \\"0-7:Normal,8-14:Mild,15-21:Severe\\" --json"',
-      '  "assess share set --app <id> --form-type all --form-perm 1 --form-day 3650000 --json"',
-      '  "assess share url --app <id>"',
-      '  "assess connect style apply-all --app <id> --look \"心理健康评估，温暖治愈风格\" --theme minimalist --json"  (AI style, takes 30-120s)',
+      '  "assess scale data add --app <id> --scale stress --bands \\"Normal:desc||Mild:desc||Severe:desc\\" --json"  (recommended: server auto-computes even boundaries + 999 sentinel)',
+      '  "assess scale data add --app <id> --scale stress --ranges \\"0-7:Normal,8-14:Mild,15-21:Severe\\" --json"    (manual boundaries; only for non-even knowledge-specified thresholds)',
+      '  "assess share set --app <id> --form-type visitor --form-perm 1 --form-day 0 --json"   (anonymous + permanent)',
+      '  "assess share set --app <id> --form-type all --form-perm 1 --json"                    (logged-in users only)',
+      '  "assess share query --app <id> --json"                                                (verify type/perm/day triple)',
+      '  "assess expert config --app <id> --name \\"...\\" --role \\"...\\" --kbText \\"...\\" --json"  (adds + enables an expert; --name/--kbText required)',
+      '  "assess expert set --app <id> --property enable --value false --json"                 (single-property toggle)',
+      '  "assess connect style apply-all --app <id> --look \\"心理健康评估，温暖治愈风格\\" --theme minimalist --json"  (AI style, takes 30-120s)',
       '  "assess app remove --app <id> --json"                                                        (IRREVERSIBLE — confirm first, see SAFETY above)',
     ].join('\n'), {
     command: z.string().describe(
@@ -483,5 +697,5 @@ export async function startMcpServer(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`FormLM MCP Server v${VERSION} running on stdio (7 tools + 6 resources)`);
+  console.error(`FormLM MCP Server v${VERSION} running on stdio (9 tools + 6 resources)`);
 }

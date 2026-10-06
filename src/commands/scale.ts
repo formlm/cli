@@ -192,9 +192,10 @@ export function registerScaleCommand(parent: Command): void {
 
   data
     .command('add')
-    .description('Add score ranges. Batch mode: --ranges "0-7:Normal,8-14:Mild,15-21:Severe". Single mode: --min --max --value')
+    .description('Add score ranges. Recommended --bands "Normal:desc||Mild:desc||Severe:desc" (server auto-computes even boundaries + 999 sentinel, no manual math). Also supports --ranges "0-7:Normal,8-14:Mild,15-21:Severe" or single mode --min --max --value')
     .requiredOption('--app <appId>', 'App ID')
     .requiredOption('--scale <scaleId>', 'Dimension ID')
+    .option('--bands <bands>', 'Engine auto-balance mode (recommended): ResultText:Description||ResultText:Description||... — server evenly splits boundaries over the dimension actual score range (top=999 sentinel, next.min=prev.max+1). Bands separated by ||, first colon splits label from description, ordered lowest→highest score. Takes precedence over --ranges')
     .option('--ranges <ranges>', 'Batch format: min-max:value[:desc], comma-separated. e.g. "0-7:Normal,8-14:Mild,15-21:Severe"')
     .option('--id <dataId>', 'Range ID (auto-generated if omitted, single mode only)')
     .option('--min <min>', 'Min score (single mode)', parseFloat)
@@ -204,6 +205,7 @@ export function registerScaleCommand(parent: Command): void {
     .option('--unique [value]', 'Unique display in enableSingle mode (true/false)')
     .action(async (opts) => {
       let cmd = `assess scale data add --app ${opts.app} --scale ${opts.scale}`;
+      if (opts.bands) cmd += ` --bands "${escapeArg(opts.bands)}"`;
       if (opts.ranges) cmd += ` --ranges "${escapeArg(opts.ranges)}"`;
       if (opts.id) cmd += ` --id ${opts.id}`;
       if (opts.min !== undefined) cmd += ` --min ${opts.min}`;

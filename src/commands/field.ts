@@ -1,13 +1,15 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
-import { output } from '../output.js';
+import { output, localFail } from '../output.js';
 import { escapeArg, normBool } from '../utils.js';
 
 // Validate field ID: only alphanumeric + underscore (snake_case), no spaces or special chars
 function validateFieldId(id: string): void {
   if (!/^[a-zA-Z0-9_]+$/.test(id)) {
-    console.error(`❌ Invalid field ID: "${id}". ID must be alphanumeric + underscore (snake_case), e.g. q1_anxiety.`);
-    process.exit(1);
+    // Suggest the closest snake_case form (kebab/space/dot → underscore) instead of only
+    // restating the rule — old scripts written against kebab-case ids used to fail blindly.
+    const suggestion = id.replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
+    localFail(`Invalid field ID: "${id}". ID must be alphanumeric + underscore (snake_case), e.g. q1_anxiety.` + (suggestion && suggestion !== id ? ` Suggested: "${suggestion}"` : ''));
   }
 }
 
@@ -128,8 +130,7 @@ export function registerFieldCommand(parent: Command): void {
     .option('--shareable [value]', 'Visible on share page (true/false)')
     .action(async (opts) => {
       if (!opts.id && !opts.key) {
-        console.error('❌ Either --id or --key is required');
-        process.exit(1);
+        localFail('Either --id or --key is required');
       }
       let cmd = `assess form update --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
@@ -166,8 +167,7 @@ export function registerFieldCommand(parent: Command): void {
     .option('--key <fieldKey>', 'Field Key')
     .action(async (opts) => {
       if (!opts.id && !opts.key) {
-        console.error('❌ Either --id or --key is required');
-        process.exit(1);
+        localFail('Either --id or --key is required');
       }
       let cmd = `assess form remove --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
@@ -187,8 +187,7 @@ export function registerFieldCommand(parent: Command): void {
     .requiredOption('--value <value>', 'Property value')
     .action(async (opts) => {
       if (!opts.id && !opts.key) {
-        console.error('❌ Either --id or --key is required');
-        process.exit(1);
+        localFail('Either --id or --key is required');
       }
       let cmd = `assess form set-property --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;
@@ -207,8 +206,7 @@ export function registerFieldCommand(parent: Command): void {
     .requiredOption('--pos <pos>', 'Target position (1-based)', parseInt)
     .action(async (opts) => {
       if (!opts.id && !opts.key) {
-        console.error('❌ Either --id or --key is required');
-        process.exit(1);
+        localFail('Either --id or --key is required');
       }
       let cmd = `assess form move --app ${opts.app}`;
       if (opts.id) cmd += ` --id ${opts.id}`;

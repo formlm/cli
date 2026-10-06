@@ -1,6 +1,6 @@
 {
   "name": "@formlm/cli",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "The official CLI & MCP Server for FormLM — let AI Agents build and manage your forms directly",
   "type": "module",
   "main": "dist/index.js",
@@ -21,8 +21,17 @@
   "keywords": [
     "formlm",
     "mcp",
+    "mcp-server",
     "cli",
-    "ai-agent"
+    "ai-agent",
+    "forms",
+    "form-builder",
+    "assessment",
+    "questionnaire",
+    "data-api",
+    "claude",
+    "cursor",
+    "model-context-protocol"
   ],
   "author": "FormLM",
   "license": "MIT",

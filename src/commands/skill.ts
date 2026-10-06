@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { execCommand } from '../exec.js';
-import { output } from '../output.js';
+import { output, localFail } from '../output.js';
 
 /**
  * Skill Command — Fetch SKILL.md Domain Knowledge
@@ -22,8 +22,7 @@ export function registerSkillCommand(parent: Command): void {
     .action(async (skillId: string) => {
       const valid = ['form', 'scale', 'connect', 'report', 'expert', 'share'];
       if (!valid.includes(skillId)) {
-        console.error(`❌ Invalid skill ID "${skillId}". Valid: ${valid.join(', ')}`);
-        process.exit(1);
+        localFail(`Invalid skill ID "${skillId}". Valid: ${valid.join(', ')}`);
       }
       const cmd = `assess skill ${skillId}`;
       const result = await execCommand(cmd);

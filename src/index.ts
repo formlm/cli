@@ -10,14 +10,27 @@ import { registerReportCommand } from './commands/report.js';
 import { registerExpertCommand } from './commands/expert.js';
 import { registerSmartCommand } from './commands/smart.js';
 import { registerSnapshotCommand } from './commands/snapshot.js';
+import { registerDoctorCommand } from './commands/doctor.js';
 import { registerSkillCommand } from './commands/skill.js';
 import { VERSION } from './version.js';
+
+// ── Global `--json` tolerance ────────────────────────────────────
+// Accept `--json` at ANY position (before or after the subcommand) without every
+// subcommand having to declare it. Commander would otherwise throw
+// "unknown option '--json'" on subcommands that don't define it. We strip the
+// token from argv before parsing and translate it into machine-output mode
+// (FORMLM_JSON → the stable {ok,code,message,data} envelope in output.ts).
+// Values are matched as whole argv tokens only, so `--plan <json>` is unaffected.
+if (process.argv.includes('--json')) {
+  process.env.FORMLM_JSON = process.env.FORMLM_JSON || '1';
+  process.argv = process.argv.filter(a => a !== '--json');
+}
 
 const program = new Command();
 
 program
   .name('formlm-cli')
-  .description('The official CLI & MCP Server for FormLM — https://formlm.me\n\n  Quick start:\n    formlm-cli smart plan --input "a mental health screening questionnaire"\n    formlm-cli snapshot --app <appId>\n    formlm-cli skill form\n    formlm-cli mcp  (start MCP server for any MCP client: Claude / Cursor / Codex CLI / Windsurf / etc.)')
+  .description('The official CLI & MCP Server for FormLM — https://formlm.me\n\n  Quick start:\n    formlm-cli smart plan --input "a mental health screening questionnaire" --save-plan plan.json\n    formlm-cli smart execute --app <appId> --module form [--plan-file plan.json]\n    formlm-cli smart generate --input "a mental health screening questionnaire" --publish --doctor   (one-shot wrapper)\n    formlm-cli snapshot --app <appId> --summary\n    formlm-cli doctor --app <appId> --expect-lang en\n    formlm-cli share publish --app <appId> --access visitor   (anonymous; --access all needs login)\n    formlm-cli skill form\n    formlm-cli mcp  (start MCP server for any MCP client: Claude / Cursor / Codex CLI / Windsurf / etc.)\n\n  Steps: smart plan → smart execute per module. \"smart generate\" wraps both in one call.')
   .version(VERSION)
   .option('--profile <name>', 'Profile to use (overrides default)');
 
@@ -48,25 +61,51 @@ program.exitOverride((err: any) => {
     'commander.invalidArgument',             // bad .choices() value (e.g. --plan-type)
     'commander.conflictingOption',
   ];
+  // FORMLM_NO_EXIT=1: never kill the host process on a per-command input mistake —
+  // emit a parseable envelope (JSON mode) or a friendly error, then throw so the
+  // bottom-level catch swallows it. Batch drivers keep running.
+  if (process.env.FORMLM_NO_EXIT === '1') {
+    if (process.env.FORMLM_JSON === '1') {
+      console.log(JSON.stringify({ ok: false, code: 400, message: msg, data: null }));
+    } else {
+      console.error();
+      console.error(`❌ ${msg}`);
+      const owning = err.commanderCommand || err.command || program;
+      const cmd = owning && typeof owning.helpInformation === 'function' ? owning : program;
+      if (inputMistakeCodes.includes(err.code) && cmd && cmd.helpInformation) {
+        console.error();
+        console.error('💡 Usage:');
+        const lines = cmd.helpInformation().split('\n').filter((l: string) => l.trim());
+        console.error(lines.slice(0, Math.min(lines.length, 12)).join('\n'));
+      }
+    }
+    throw err;
+  }
+  // Resolve the command the error actually belongs to. Commander attaches the owning
+  // command on `commanderCommand` (e.g. `field add` for a missing required option);
+  // the legacy `command` property is often the root program, which used to print the
+  // whole top-level help instead of the subcommand usage (noisy, slow to act on).
   console.error();
   console.error(`❌ ${msg}`);
-  const cmd = err.command || program;
+  const owning = err.commanderCommand || err.command || program;
+  const cmd = owning && typeof owning.helpInformation === 'function' ? owning : program;
   if (inputMistakeCodes.includes(err.code) && cmd && cmd.helpInformation) {
     console.error();
     console.error('💡 Usage:');
     const help = cmd.helpInformation();
     const lines = help.split('\n').filter((l: string) => l.trim());
-    const usageLines = lines.slice(0, Math.min(lines.length, 8));
+    const usageLines = lines.slice(0, Math.min(lines.length, 12));
     console.error(usageLines.join('\n'));
   }
   process.exit(err.exitCode ?? 1);
 });
 
 // ── Register command groups ────────────────────────────────────
-// Order: high-level (smart) → query (snapshot/skill) → modules → auth/profile
+// Order: high-level (smart) → query (snapshot/doctor/skill) → modules → auth/profile
 
 registerSmartCommand(program);
 registerSnapshotCommand(program);
+registerDoctorCommand(program);
 registerSkillCommand(program);
 registerAppCommand(program);
 registerFieldCommand(program);
@@ -99,10 +138,18 @@ program.hook('preAction', () => {
 // parseAsync ensures all async action handlers complete before exiting.
 // For regular commands: resolves after action completes → process.exit(0).
 // For MCP server mode: never resolves (server keeps running) → process stays alive.
+// FORMLM_NO_EXIT=1 (batch/library mode) suppresses BOTH forced exits, so a single
+// failing command cannot kill the host loop — matching output.ts semantics.
 program.parseAsync().then(() => {
+  if (process.env.FORMLM_NO_EXIT === '1') return;
   process.exit(0);
-}).catch(() => {
+}).catch((err: any) => {
   // exitOverride already handles commander errors via process.exit(1).
-  // This catches any other unexpected errors.
+  // This catches any other unexpected errors (e.g. localFail throwing under NO_EXIT).
+  if (process.env.FORMLM_NO_EXIT === '1') {
+    // Envelope already printed by output()/localFail() in JSON mode; log detail for humans.
+    if (err && err.message && process.env.FORMLM_JSON !== '1') console.error(`❌ ${err.message}`);
+    return;
+  }
   process.exit(1);
 });
