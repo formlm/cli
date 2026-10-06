@@ -20,9 +20,9 @@ With `formlm-cli`, you can control FormLM directly from your terminal or plug it
 
 ---
 
-## What's New in v0.3.2
+## What's New in v0.5.0
 
-Hardening round driven by real agent field reports (batch runs of 50 apps). Behaviour-changing fixes:
+Hardening round driven by real agent field reports (batch runs of 50 apps), plus a second pass that re-checked every reported item against the code and machine-verified all documented commands.
 
 - **`share publish` now defaults to anonymous access** (`--access visitor`) and exposes `--access / --perm / --days / --no-style`; a new `share set` subcommand passes the raw server parameters through, so "anyone + permanent" no longer requires calling the internal API. Previously publish was hard-wired to `form-type all`, which **requires login** — anonymous respondents got the login page.
 - **`expert config --enable` no longer self-destructs**: the value is forwarded space-separated (`--enable true`) and the server accepts it again. Before, `--enable=true` was rejected as an unknown option, the whole command was discarded, yet the envelope still reported success.
@@ -37,6 +37,8 @@ Hardening round driven by real agent field reports (batch runs of 50 apps). Beha
 
 - **`smart generate` now exists** as a resumability-preserving wrapper over `plan → execute×N → (--publish) → (--doctor)`, and the README finally matches the command surface. Earlier versions documented a `smart generate` that was never implemented (the first command every agent ran, and it failed).
 - **Generation is now pin-able**: `smart plan --dimensions "A|B|C"` fixes the scoring dimension names and count, `--app-name` fixes the app display name, `--dry-run` validates a prompt without leaving a residue app. Unpinned dimensions used to be renamed/recounted by the AI, forcing page↔app rework (batch measurement: 11/13 pages).
+- **Docs are now machine-verified against the command surface**: every `formlm-cli …` example in README/INSTALL is executed and checked for unknown/missing options (149 examples, 0 drifts), so documented commands cannot silently diverge again.
+- `smart plan` output carries structured `modules` / `missingModules`, so callers can detect coverage gaps (e.g. no `expert` for non-consultation plans) without parsing prose; the raw exec `403` now lists the whitelisted command set.
 
 ---
 
