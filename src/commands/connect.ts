@@ -59,7 +59,7 @@ export function registerConnectCommand(parent: Command): void {
     .command('config')
     .description('Get configurable properties for a specific page format')
     .requiredOption('--category <category>', 'Page category: cover / main / final')
-    .requiredOption('--format <format>', 'Page format (e.g. rich-text, text, user-info)')
+    .requiredOption('--format <format>', 'Page format (e.g. rich-text, user-info)')
     .action(async (opts) => {
       const cmd = `assess connect config --category ${opts.category} --format ${opts.format}`;
       const result = await execCommand(cmd);
@@ -76,7 +76,7 @@ export function registerConnectCommand(parent: Command): void {
     .requiredOption('--app <appId>', 'App ID')
     .option('--id <pageId>', 'Page ID (recommended for precise reference, e.g. cover_main)')
     .option('--name <name>', 'Page name')
-    .option('--format <format>', 'Page format (rich-text/text/user-info)', 'text')
+    .option('--format <format>', 'Page format (rich-text/user-info)', 'rich-text')
     .option('--layout <layout>', 'Page layout', 'cube')
     .option('--value <html>', 'Top content (rich text HTML)')
     .option('--description <html>', 'Bottom content (rich text HTML)')
@@ -117,7 +117,7 @@ export function registerConnectCommand(parent: Command): void {
     .requiredOption('--app <appId>', 'App ID')
     .option('--id <pageId>', 'Page ID (required when multiple cover pages exist)')
     .option('--name <name>', 'Page name')
-    .option('--format <format>', 'Page format (rich-text/text/user-info)')
+    .option('--format <format>', 'Page format (rich-text/user-info)')
     .option('--layout <layout>', 'Page layout')
     .option('--value <html>', 'Top content (rich text HTML)')
     .option('--description <html>', 'Bottom content (rich text HTML)')

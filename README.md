@@ -402,7 +402,7 @@ formlm-cli connect types [--category cover|main|final] --verbose
 formlm-cli connect config --category cover --format rich-text
 
 # Cover page management
-formlm-cli connect cover-page add --app <appId> --id cover_main --name "Welcome" --format text --value "<h1>Hello</h1>"
+formlm-cli connect cover-page add --app <appId> --id cover_main --name "Welcome" --format rich-text --value "<h1>Hello</h1>"
 formlm-cli connect cover-page update --app <appId> --id cover_main --name "New Title"
 formlm-cli connect cover-page find --app <appId> [--id cover_main]
 formlm-cli connect cover-page remove --app <appId> [--id cover_main]
