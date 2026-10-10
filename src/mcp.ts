@@ -119,7 +119,7 @@ export async function startMcpServer(): Promise<void> {
   }
 
   // ════════════════════════════════════════════════════════════════
-  // MCP TOOLS — Layered Architecture (9 tools)
+  // MCP TOOLS — Layered Architecture (10 tools)
   //
   //  Recommended workflow (smart pipeline):
   //    1. auth_login → authenticate
@@ -132,8 +132,9 @@ export async function startMcpServer(): Promise<void> {
 
   // ── Tier 0: Authentication ────────────────────────────────────
 
-  server.tool('auth_login',
-    [
+  server.registerTool('auth_login', {
+    title: 'Login to FormLM',
+    description: [
       'Login to FormLM. Three methods, in order of preference:',
       '',
       '1. Access Token (recommended): ask the user to copy it from',
@@ -151,11 +152,14 @@ export async function startMcpServer(): Promise<void> {
       '',
       'IMPORTANT: At the START of any FormLM session (before calling formlm_generate/formlm_exec),',
       'call auth_status first. If not logged in, authenticate immediately. Do NOT wait for a 401 error.',
-    ].join('\n'), {
+    ].join('\n'),
+    inputSchema: {
     token: z.string().optional().describe('Access token from formlm.me → Workspace → Account Settings → Access Token → Copy'),
     email: z.string().optional().describe('Account email (use with `code` for verification-code login, or with `password`)'),
     code: z.string().optional().describe('Email verification code (6 digits, valid 5 min) — request it via auth_email_code first'),
     password: z.string().optional().describe('Account password (use together with email; verification-code/Google accounts have no password)'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (params) => {
     if (params.token) {
       addProfile({ name: 'default', url: getBaseUrl(), token: params.token, active: true });
@@ -193,8 +197,9 @@ export async function startMcpServer(): Promise<void> {
     return { content: [{ type: 'text' as const, text: '❌ Provide `token`, or `email` + `code`, or `email` + `password`. Recommended: ask the user for the Access Token (formlm.me → Workspace → Account Settings), or start an email verification-code login via auth_email_code.' }] };
   });
 
-  server.tool('auth_email_code',
-    [
+  server.registerTool('auth_email_code', {
+    title: 'Request email verification code',
+    description: [
       'Request an email verification code for FormLM login (part of auth_login method 2 — no password needed).',
       '',
       'Two-step usage:',
@@ -205,9 +210,12 @@ export async function startMcpServer(): Promise<void> {
       '',
       'Server rate limits (anti-abuse): 1 send per email per 60s, 10 sends per IP per minute.',
       'On 429, tell the user to wait a minute. On 403, the digits were wrong — fetch a fresh image and try once more.',
-    ].join('\n'), {
+    ].join('\n'),
+    inputSchema: {
     email: z.string().describe('Account email (the verification code will be sent here)'),
     captcha: z.string().optional().describe('The 4 digits the user read from the captcha image (omit on first call to get the image)'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   }, async (params) => {
     if (!params.captcha) {
       const cap = await fetchCaptchaImage(params.email);
@@ -240,22 +248,104 @@ export async function startMcpServer(): Promise<void> {
     return { content: [{ type: 'text' as const, text: `❌ Failed to send code: ${send.message}` }] };
   });
 
-  server.tool('auth_status',
-    [
+  server.registerTool('auth_status', {
+    title: 'Check login status',
+    description: [
       'Check current login status.',
       'Tokens expire after 7 days — if this returns "Token invalid (expired)", ask the user to copy a fresh',
       'Access Token from formlm.me → Workspace → Account Settings and re-login via auth_login.',
-    ].join('\n'), {}, async () => {
+    ].join('\n'),
+    inputSchema: {},
+    outputSchema: {
+      loggedIn: z.boolean(),
+      message: z.string(),
+      url: z.string().optional(),
+      user: z.string().optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, async () => {
     const profile = getActiveProfile();
     if (!profile) {
-      return { content: [{ type: 'text' as const, text: '❌ Not logged in. Use auth_login to authenticate (recommended: Access Token from formlm.me → Workspace → Account Settings).' }] };
+      const text = '❌ Not logged in. Use auth_login to authenticate (recommended: Access Token from formlm.me → Workspace → Account Settings).';
+      return { content: [{ type: 'text' as const, text }], structuredContent: { loggedIn: false, message: text } };
     }
     const result = await authMe();
     if (result.code === 0) {
       const userInfo = typeof result.data === 'object' ? (result.data as any).userName : result.data;
-      return { content: [{ type: 'text' as const, text: `✅ Logged in. Server: ${profile.url}\nUser: ${userInfo}` }] };
+      const text = `✅ Logged in. Server: ${profile.url}\nUser: ${userInfo}`;
+      return { content: [{ type: 'text' as const, text }], structuredContent: { loggedIn: true, message: text, url: profile.url, user: String(userInfo ?? '') } };
     }
-    return { content: [{ type: 'text' as const, text: `❌ Token invalid: ${result.message}\nTokens expire after 7 days. Ask the user to copy a fresh Access Token from formlm.me → Workspace → Account Settings, then re-login via auth_login.` }] };
+    const text = `❌ Token invalid: ${result.message}\nTokens expire after 7 days. Ask the user to copy a fresh Access Token from formlm.me → Workspace → Account Settings, then re-login via auth_login.`;
+    return { content: [{ type: 'text' as const, text }], structuredContent: { loggedIn: false, message: text, url: profile.url } };
+  });
+
+  server.registerTool('formlm_usage', {
+    title: 'Account usage & budget',
+    description: [
+      'Report the logged-in account budget: plan, app-slot usage, and AI credits — check BEFORE batch creating.',
+      'Free plan caps at 10 apps (in-use AND recycle-bin apps hold a slot; purging frees it): once full,',
+      'app create / formlm_generate fail with 403 "app-limit". AI credits are billed per completed generation',
+      '(capped at zero — generation never blocks). When slots are full, tell the user: purge the recycle bin',
+      'at formlm.me → Workspace or upgrade (formlm.me → #/vip).',
+      'Requires a server that reports usage fields; on an older server those lines come back "n/a".',
+    ].join('\n'),
+    inputSchema: {},
+    outputSchema: {
+      ok: z.boolean(),
+      message: z.string(),
+      account: z.string().optional(),
+      plan: z.string().optional(),
+      appsUsed: z.number().optional(),
+      appsLimit: z.number().optional(),
+      appsUnlimited: z.boolean().optional(),
+      appsLeft: z.number().optional(),
+      credits: z.number().optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, async () => {
+    const me = await authMe();
+    if (me.code !== 0) {
+      const text = `❌ ${me.message}`;
+      return { content: [{ type: 'text' as const, text }], structuredContent: { ok: false, message: text } };
+    }
+    let d: any = me.data;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch { d = {}; } }
+    d = d || {};
+    const unlimited = d.appLimitUnlimited === true;
+    const lines: string[] = ['📊 FormLM account usage'];
+    if (d.account) lines.push(`   Account:       ${d.account}`);
+    if (d.tenantType) lines.push(`   Plan:          ${d.tenantType}`);
+    if (typeof d.appUsage === 'number') {
+      const cap = unlimited ? 'unlimited' : String(d.appLimit);
+      const left = unlimited ? '' : `   (${Math.max(0, Number(d.appLimit) - d.appUsage)} left)`;
+      lines.push(`   Apps:          ${d.appUsage} / ${cap}${left}`);
+      if (!unlimited && Math.max(0, Number(d.appLimit) - d.appUsage) === 0) {
+        lines.push('   ⚠️ Slot cap reached — creating returns 403 app-limit. Recycle-bin apps still hold a slot:');
+        lines.push('      purge one at formlm.me → Workspace, or upgrade (#/vip).');
+      }
+    } else {
+      lines.push('   Apps:          n/a (server too old to report usage)');
+    }
+    if (typeof d.credit === 'number') {
+      lines.push(`   AI credits:    ${d.credit}`);
+      if (d.credit <= 0) lines.push('   ℹ️ Credits at 0 — generation still works (billing capped, never blocks); top-up at #/vip.');
+    } else {
+      lines.push('   AI credits:    n/a (server too old to report credits)');
+    }
+    return {
+      content: [{ type: 'text' as const, text: lines.join('\n') }],
+      structuredContent: {
+        ok: true,
+        message: lines.join('\n'),
+        account: d.account ? String(d.account) : undefined,
+        plan: d.tenantType ? String(d.tenantType) : undefined,
+        appsUsed: typeof d.appUsage === 'number' ? d.appUsage : undefined,
+        appsLimit: !unlimited && d.appLimit !== undefined ? Number(d.appLimit) : undefined,
+        appsUnlimited: unlimited,
+        appsLeft: !unlimited && typeof d.appUsage === 'number' ? Math.max(0, Number(d.appLimit) - d.appUsage) : undefined,
+        credits: typeof d.credit === 'number' ? d.credit : undefined,
+      },
+    };
   });
 
   // ── Tier 1: Smart Pipeline (Natural Language → Plan + Sequential Execute) ─
@@ -263,8 +353,9 @@ export async function startMcpServer(): Promise<void> {
   // This tool generates an execution plan (Phase 1 only, ~10-30s).
   // After getting the plan, use formlm_exec to execute each module sequentially.
 
-  server.tool('formlm_generate',
-    [
+  server.registerTool('formlm_generate', {
+    title: 'Generate execution plan',
+    description: [
       'Generate an execution plan from natural language description (Phase 1 only — does NOT execute any module).',
       'Server runs: Plan AI (assess-plan.md) → generates task list for 6 modules (form/scale/connect/report/expert/share).',
       'Returns: appId, planType, name, plan JSON, and task list. Takes ~10-30 seconds.',
@@ -300,7 +391,8 @@ export async function startMcpServer(): Promise<void> {
       '## Reference Documents:',
       'If the user has reference documents (questionnaire files, scoring criteria), ask them to paste the content',
       'directly into the chat. The input supports up to 8000 characters.',
-    ].join('\n'), {
+    ].join('\n'),
+    inputSchema: {
     input: z.string().describe(
       'Natural language description of the app. Be specific: mention topic, audience, number of questions, dimensions/subscales, scoring, visual style. ' +
       'Example: "A workplace stress assessment for office workers with 3 dimensions (workload, autonomy, support), 15 questions, score 0-60, detailed result interpretation, dark professional style". ' +
@@ -346,6 +438,8 @@ export async function startMcpServer(): Promise<void> {
       '(e.g. zh-hant apps got Simplified Chinese page names and missed certificate pages). ' +
       'Default: server default (Simplified Chinese).'
     ),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   }, async (params) => {
     let cmd = `assess smart plan --input "${escapeArg(params.input)}"`;
     if (params.planType) cmd += ` --plan-type ${params.planType}`;
@@ -366,8 +460,9 @@ export async function startMcpServer(): Promise<void> {
   // Takes structured params (appId, module, plan) — no manual JSON escaping needed.
   // When the last module (share) completes, auto-fetches the 3 app URLs.
 
-  server.tool('formlm_execute',
-    [
+  server.registerTool('formlm_execute', {
+    title: 'Execute plan module',
+    description: [
       'Execute a single module from the plan generated by formlm_generate.',
       'Call this sequentially for each module, following the task list order from formlm_generate.',
       'Default order: form → scale → connect → report → expert → share.',
@@ -386,10 +481,13 @@ export async function startMcpServer(): Promise<void> {
       'Success is structured: the response carries appId / module / taskStatus / status(success|error) — trust taskStatus,',
       'not human wording. A retried `scale` execute appends dimensions unless existing ones are cleared first',
       '(formlm_exec: "assess scale clear --app <id>").',
-    ].join('\n'), {
+    ].join('\n'),
+    inputSchema: {
     appId: z.string().describe('App ID from formlm_generate result'),
     module: z.string().describe('Module to execute: form / scale / connect / report / expert / share'),
     plan: z.string().optional().describe('Full plan JSON (optional — the plan is cached server-side for ~10 min after formlm_generate; pass this only to resume after the cache expired)'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   }, async (params) => {
     let cmd = `assess smart execute --app ${params.appId} --module ${params.module}`;
     if (params.plan) {
@@ -465,8 +563,9 @@ export async function startMcpServer(): Promise<void> {
 
   // ── Tier 2: State & Knowledge ────────────────────────────────────
 
-  server.tool('formlm_snapshot',
-    [
+  server.registerTool('formlm_snapshot', {
+    title: 'App state snapshot',
+    description: [
       'Get aggregated snapshot of ALL 6 app modules in a single call.',
       'Returns: form fields, scale dimensions+ranges, connect page styles, report pages+widgets, expert config, share status.',
       '',
@@ -478,16 +577,24 @@ export async function startMcpServer(): Promise<void> {
       'styled, expertEnabled/expertHasContent, share.type/perm/day/forever/shareToken) instead of',
       'the full module payloads, so you do not have to parse widget layoutData or markdown tables.',
       'If any module fetch fails the result carries _errors/_degraded — treat it as UNKNOWN, not as "empty module".',
-    ].join('\n'), {
+    ].join('\n'),
+    inputSchema: {
     appId: z.string().describe('App ID'),
     module: z.string().optional().describe('Get only one module: form / scale / connect / report / expert / share (default: all 6)'),
     summary: z.boolean().optional().describe('Return the compact audit profile instead of full module payloads (recommended for batch verification)'),
+    },
+    outputSchema: {
+      mode: z.enum(['full', 'summary']),
+      data: z.unknown(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
   }, async (params) => {
     const validModules = ['form', 'scale', 'connect', 'report', 'expert', 'share'];
     const modules = params.module ? [params.module] : validModules;
     // Validate module name early — prevent silent empty results
     if (params.module && !validModules.includes(params.module)) {
-      return { content: [{ type: 'text' as const, text: `❌ Invalid module "${params.module}". Valid: ${validModules.join(', ')}` }] };
+      const text = `❌ Invalid module "${params.module}". Valid: ${validModules.join(', ')}`;
+      return { content: [{ type: 'text' as const, text }], structuredContent: { mode: 'full' as const, data: { error: text } } };
     }
     const commands: Record<string, string> = {
       form:    `assess form query --app ${params.appId} --json`,
@@ -542,14 +649,15 @@ export async function startMcpServer(): Promise<void> {
           summary['_note'] = 'All module reads failed — the zero counts are UNKNOWNS, not empty state. Retry before concluding.';
         }
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(summary) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(summary) }], structuredContent: { mode: 'summary', data: summary } };
     }
 
-    return { content: [{ type: 'text' as const, text: JSON.stringify(snapshot, null, 2) }] };
+    return { content: [{ type: 'text' as const, text: JSON.stringify(snapshot, null, 2) }], structuredContent: { mode: 'full', data: snapshot } };
   });
 
-  server.tool('formlm_doctor',
-    [
+  server.registerTool('formlm_doctor', {
+    title: 'Quality audit (read-only)',
+    description: [
       'Read-only quality inspection of ONE app — the fastest way to verify a generated app before wiring it into a page.',
       'Returns {ok, failCount, warnCount, summary, findings[]} where each finding is {name, level(pass|warn|fail), detail, fix?}.',
       '',
@@ -562,14 +670,32 @@ export async function startMcpServer(): Promise<void> {
       'widget BODY text (extra queries; titles/labels are always scanned).',
       '',
       'Read-only: this tool never writes. Apply the returned `fix` commands via formlm_exec.',
-    ].join('\n'), {
+    ].join('\n'),
+    inputSchema: {
     appId: z.string().describe('App ID'),
     expectLang: z.string().optional().describe('BCP-47 expected language, e.g. "en" / "zh" / "zh-hant" / "ja". Enables the script-consistency scan.'),
     deep: z.boolean().optional().describe('Also fetch and scan report widget body text (slower, more accurate language check)'),
     probe: z.boolean().optional().describe('Probe the fill-in URL for reachability (default true)'),
+    },
+    outputSchema: {
+      ok: z.boolean(),
+      message: z.string(),
+      appId: z.string().optional(),
+      failCount: z.number().optional(),
+      warnCount: z.number().optional(),
+      findings: z.array(z.object({
+        name: z.string(),
+        level: z.enum(['pass', 'warn', 'fail']),
+        detail: z.string(),
+        fix: z.string().optional(),
+      })).optional(),
+      summary: z.unknown().optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
   }, async (params) => {
     if (params.expectLang && !isValidLangCode(params.expectLang)) {
-      return { content: [{ type: 'text' as const, text: `❌ Invalid expectLang "${params.expectLang}". Use a BCP-47 code like en / zh / zh-hant / ja.` }] };
+      const text = `❌ Invalid expectLang "${params.expectLang}". Use a BCP-47 code like en / zh / zh-hant / ja.`;
+      return { content: [{ type: 'text' as const, text }], structuredContent: { ok: false, message: text, appId: params.appId } };
     }
     const report = await runDoctor(params.appId, {
       expectLang: params.expectLang,
@@ -587,25 +713,46 @@ export async function startMcpServer(): Promise<void> {
     }
     lines.push('');
     lines.push('Compact summary: ' + JSON.stringify(report.summary));
-    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    return {
+      content: [{ type: 'text' as const, text: lines.join('\n') }],
+      structuredContent: {
+        ok: report.ok,
+        message: lines.join('\n'),
+        appId: report.appId,
+        failCount: report.failCount,
+        warnCount: report.warnCount,
+        findings: report.findings,
+        summary: report.summary,
+      },
+    };
   });
 
-  server.tool('formlm_skill',
-    [
+  server.registerTool('formlm_skill', {
+    title: 'Domain knowledge doc',
+    description: [
       'Get the full SKILL.md domain knowledge for a specific skill module.',
       'Same documents that AssessAgent loads internally — contains P0/P1/P2 constraints, parameter rules, examples.',
       '',
       'You can also read these via MCP resources: formlm://skills/<skillId>',
       'READ the relevant skill BEFORE constructing formlm_exec commands manually.',
-    ].join('\n'), {
+    ].join('\n'),
+    inputSchema: {
     skillId: z.string().describe('Skill ID: form / scale / connect / report / expert / share'),
+    },
+    outputSchema: {
+      skillId: z.string(),
+      markdown: z.string(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
   }, async (params) => {
     const valid = ['form', 'scale', 'connect', 'report', 'expert', 'share'];
     if (!valid.includes(params.skillId)) {
-      return { content: [{ type: 'text' as const, text: `❌ Invalid skill ID. Valid: ${valid.join(', ')}` }] };
+      const text = `❌ Invalid skill ID. Valid: ${valid.join(', ')}`;
+      return { content: [{ type: 'text' as const, text }], structuredContent: { skillId: params.skillId, markdown: text } };
     }
     const r = await execCommand(`assess skill ${params.skillId}`, undefined, TIMEOUT_DEFAULT);
-    return { content: [{ type: 'text' as const, text: toText(r) }] };
+    const text = toText(r);
+    return { content: [{ type: 'text' as const, text }], structuredContent: { skillId: params.skillId, markdown: text } };
   });
 
   // ── Tier 3: Direct Execution (Advanced) ──────────────────────────
@@ -624,8 +771,9 @@ export async function startMcpServer(): Promise<void> {
   // to `assess <module> query`), so "assess snapshot" / "assess field list" are not on this
   // channel and return 403 by design — use the formlm_snapshot tool or the module queries.
 
-  server.tool('formlm_exec',
-    [
+  server.registerTool('formlm_exec', {
+    title: 'Run FormLM CLI command',
+    description: [
       'Execute a raw FormLM CLI command directly.',
       'Use this for fine-grained control that formlm_generate doesn\'t cover, or for modifying existing apps.',
       '',
@@ -665,11 +813,14 @@ export async function startMcpServer(): Promise<void> {
       '  "assess expert set --app <id> --property enable --value false --json"                 (single-property toggle)',
       '  "assess connect style apply-all --app <id> --look \\"心理健康评估，温暖治愈风格\\" --theme minimalist --json"  (AI style, takes 30-120s)',
       '  "assess app remove --app <id> --json"                                                        (IRREVERSIBLE — confirm first, see SAFETY above)',
-    ].join('\n'), {
+    ].join('\n'),
+    inputSchema: {
     command: z.string().describe(
       'Full CLI command starting with "assess". Do NOT include the "formlm-cli" prefix. ' +
       'Add --json flag for structured output. Escape inner quotes with \\".'
     ),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, async (params) => {
     // Defense-in-depth: enforce the documented whitelisted command prefixes
     // before sending anything to the server. Prevents LLM hallucinations from
@@ -697,5 +848,5 @@ export async function startMcpServer(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`FormLM MCP Server v${VERSION} running on stdio (9 tools + 6 resources)`);
+  console.error(`FormLM MCP Server v${VERSION} running on stdio (10 tools + 6 resources)`);
 }

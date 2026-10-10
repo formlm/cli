@@ -78,7 +78,11 @@ Choose option **2** (Email verification code). The whole flow stays in your term
 1. A captcha image is saved to `~/.formlm/captcha.gif` and opened automatically — type the 4 digits you see (valid 60s)
 2. A 6-digit code is emailed to you (valid 5 minutes) — type it to log in
 
-Works for ALL accounts, including accounts with no password. Rate limits apply (1 code per email per 60s, 10 sends per IP per minute, 5 failed code attempts lock the account for 30 minutes).
+Works for ALL accounts, including accounts with no password. **No account yet?** This flow registers you automatically on the first successful login (new accounts start with free AI credits) — the terminal is all you need.
+
+> **Headless machines (SSH / WSL / containers):** the image can't pop open — the printed path still shows; copy the file to a machine with a viewer (e.g. `scp ~/.formlm/captcha.gif .` then open it locally) and type the 4 digits.
+
+Rate limits apply (1 code per email per 60s, 10 sends per IP per minute, 5 failed code attempts lock the account for 30 minutes).
 
 ### Method C: Login with Email & Password (only if you have set a password)
 
@@ -119,6 +123,7 @@ export FORMLM_CONCURRENCY=4 # parallel apps inside snapshot --apps / doctor --ap
 
 ```bash
 formlm-cli auth status
+formlm-cli usage      # plan / app slots (free: 10, recycle bin counts) / AI credits — check before batch work
 ```
 
 Expected output:

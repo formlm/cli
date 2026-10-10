@@ -1,6 +1,6 @@
 {
   "name": "@formlm/cli",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "mcpName": "me.formlm/cli",
   "description": "The official CLI & MCP Server for FormLM — let AI Agents build and manage your forms directly",
   "type": "module",

@@ -12,6 +12,7 @@ import { registerSmartCommand } from './commands/smart.js';
 import { registerSnapshotCommand } from './commands/snapshot.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerSkillCommand } from './commands/skill.js';
+import { registerUsageCommand } from './commands/usage.js';
 import { VERSION } from './version.js';
 
 // ── Global `--json` tolerance ────────────────────────────────────
@@ -116,11 +117,12 @@ registerExpertCommand(program);
 registerShareCommand(program);
 registerAuthCommand(program);
 registerProfileCommand(program);
+registerUsageCommand(program);
 
 // ── mcp subcommand: start MCP Server ───────────────────────────
 program
   .command('mcp')
-  .description('Start MCP Server (stdio mode) for any MCP-compatible AI platform (Claude / Cursor / Codex CLI / Windsurf / Cline / etc.). Exposes 6 tools + 6 resources.')
+  .description('Start MCP Server (stdio mode) for any MCP-compatible AI platform (Claude / Cursor / Codex CLI / Windsurf / Cline / etc.). Exposes 10 tools + 6 resources.')
   .action(async () => {
     const { startMcpServer } = await import('./mcp.js');
     await startMcpServer();

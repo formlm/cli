@@ -161,9 +161,17 @@ async function execOnce(
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
+          let message: string = parsed.message ?? parsed.msg ?? 'ok';
+          // 服务端 401 只回一句 "Not authenticated"——本地无 token 分支有完整指路而过期没有
+          //（新手第一堵高频墙：token 仅 7 天有效）；统一映射成同款登录引导。
+          if ((parsed.code ?? 0) === 401 && /^not authenticated/i.test(message)) {
+            message = 'Token invalid or expired (tokens last 7 days). Re-login: formlm-cli auth login '
+              + '(method 1: paste the Access Token from formlm.me → Workspace → Account Settings → Access Token → Copy; '
+              + 'method 2: email verification code, works with no password) — or: auth login --token-stdin.';
+          }
           settle(demoteFalseSuccess({
             code: parsed.code ?? 0,
-            message: parsed.message ?? parsed.msg ?? 'ok',
+            message,
             data: parsed.data ?? null,
           }));
         } catch {

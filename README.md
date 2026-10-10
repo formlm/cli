@@ -23,6 +23,16 @@ With `formlm-cli`, you can control FormLM directly from your terminal or plug it
 
 ---
 
+## What's New in v0.5.3
+
+Tool-metadata quality for MCP directories and safer agent UX:
+
+- **All 10 MCP tools now expose standard `annotations`** (read-only / destructive / idempotent / open-world hints) and a human-readable **`title`** — supporting clients can show risk badges and friendly labels before executing anything (`formlm_exec` is explicitly marked destructive; `formlm_doctor`/`formlm_snapshot` read-only).
+- **Five read-only tools return validated structured output**: `auth_status`, `formlm_usage`, `formlm_snapshot`, `formlm_doctor` and `formlm_skill` now declare an `outputSchema` and ship a machine-checkable `structuredContent` alongside the human text — batch auditors can consume fields instead of parsing prose (e.g. `doctor.findings[].fix`, `snapshot.data._degraded`, `usage.appsLeft`).
+- The tool table above now lists all **10** tools — it had lagged at 9 since `formlm_usage` was added.
+
+---
+
 ## What's New in v0.5.0
 
 Hardening round driven by real agent field reports (batch runs of 50 apps), plus a second pass that re-checked every reported item against the code and machine-verified all documented commands.
@@ -118,7 +128,16 @@ formlm-cli auth login --token <your-token>
 #   2) Email verification code  (no password, no browser — fully in the terminal)
 #   3) Email + password (only if your account has set a password —
 #      email-verification-code and Google accounts have none)
+#
+# New here without an account? Pick method 2 — the first email-code login
+# registers the account automatically (with free AI credits); no website visit needed.
 formlm-cli auth login
+```
+
+```bash
+# Check your remaining budget BEFORE batch work — plan, app slots (free plan: 10 apps,
+# recycle-bin apps still hold a slot) and AI credits:
+formlm-cli usage
 ```
 
 ### 2. Smart Pipeline (AI-recommended)
@@ -151,6 +170,7 @@ formlm-cli smart execute --app <appId> --module share
 
 # Publish so anonymous visitors can fill it in (each respondent submits once, permanent):
 formlm-cli share publish --app <appId>            # --access visitor is the default
+#   ⚠️ an un-styled app auto-gets a default style here (30-120s AI) — pass --no-style to skip
 
 # Verify quality in one read-only call (see Doctor below):
 formlm-cli doctor --app <appId> --expect-lang en
@@ -232,7 +252,7 @@ formlm-cli doctor --app <appId> --expect-lang en --deep
 formlm-cli mcp
 ```
 
-This starts the MCP Server (stdio transport) with 9 tools + 6 resources, ready for AI Agents to connect.
+This starts the MCP Server (stdio transport) with 10 tools + 6 resources, ready for AI Agents to connect.
 
 ---
 
@@ -330,6 +350,18 @@ formlm-cli auth login                 # Interactive login — 1) Access Token, 2
 formlm-cli auth status                # Check current login state (tokens expire after 7 days)
 formlm-cli auth logout                # Clear local token
 ```
+
+### Usage (quota & credits)
+
+```bash
+formlm-cli usage                      # plan / app slots (in-use + recycle bin) / AI credits
+FORMLM_JSON=1 formlm-cli usage        # {account,plan,appsUsed,appLimit,appsRemaining,unlimited,credits,...}
+```
+
+Check the remaining budget BEFORE batch work: the free plan caps at 10 apps (403 `app-limit` once full —
+recycle-bin apps still hold a slot, purge to free) and a completed smart generation bills ≈ 20 credits
+(credits are capped at zero and never block generation). On an older server the usage/credit lines degrade
+to `n/a` — the command never guesses numbers it cannot read.
 
 ### Profile (multi-account)
 
@@ -524,13 +556,14 @@ FormLM CLI works as a standard MCP Server over stdio and plugs into **any MCP-co
 
 ---
 
-## Available MCP Tools (9)
+## Available MCP Tools (10)
 
 | Tier | Tool | Description |
 |---|---|---|
 | 0 | `auth_login` | Login with Access Token (recommended), email verification code, or email + password |
 | 0 | `auth_email_code` | Email verification-code login — fetch the captcha image & send the code (fully in-chat) |
 | 0 | `auth_status` | Check current login status |
+| 0 | `formlm_usage` | Account budget at a glance: plan, app-slot usage, AI credits — check before batch creating |
 | 1 | `formlm_generate` | Generate the execution plan (Phase 1: creates the app, returns appId + tasks) |
 | 1 | `formlm_execute` | Execute plan modules one by one after `formlm_generate` |
 | 2 | `formlm_doctor` | Read-only quality audit of one app (scoring coverage, dead experts, styling, certificate pages, language consistency, share access, reachability) |
@@ -590,11 +623,20 @@ instead of hiding the error text inside `data` while reporting success.
 | `0` | Success | — |
 | `207` | Partial (multi-module reads where one module failed) | Result carries `_errors`/`_degraded`; re-check that module, don't assume it is empty |
 | `400` | Bad request / parameter or validation error | Read `message`; the server echoes picocli's hint (valid values, missing option) |
-| `401` | Not authenticated | `formlm-cli auth login --token-stdin` (or set `FORMLM_TOKEN`) |
-| `403` | Command not on the exec whitelist, or wrong credentials/verification code | See the whitelist below; for MCP check `auth_status` |
+| `401` | Not authenticated — token missing, or **expired (tokens last 7 days)** | `formlm-cli auth login` (method 1 or 2) / `--token-stdin` / set `FORMLM_TOKEN` |
+| `403` | Command not on the exec whitelist · wrong credentials/verification code · **free-plan app cap reached (message starts `app-limit:`)** | See the whitelist below and Quotas & Limits; `app-limit` → delete unused apps (purge the recycle bin too) or upgrade |
 | `408` | Request timed out client-side | Retry read-only; for `smart execute` re-run that module (writes are not auto-retried) |
-| `429` | Rate limited (login attempts, send-code quotas) | Wait, then retry with backoff |
+| `429` | Rate limited — login attempts, send-code quotas, **AI commands (`message` starts `rate-limit:`)** | Wait, then retry with backoff; batch flows should stay under the AI limit below |
 | `500` | Transport failure or server error | Retried automatically for read-only commands |
+
+### Quotas & limits (server-enforced)
+
+| Limit | Value | Behavior when reached |
+|---|---|---|
+| Apps per free-plan account | **10** (recycle-bin apps still hold a slot — purge to free) | `app create` / `smart plan` return `403` with `app-limit:` in the message; upgrade at formlm.me → Workspace → `#/vip` |
+| AI commands per account | **60 segments/minute** (`smart plan` / `smart execute` / `expert chat`; one full `smart generate` ≈ 7 segments) | `429` with `rate-limit:`; slow down or use `FORMLM_CONCURRENCY` ≤ 4 |
+| AI credits per generated app | a completed smart generation settles as **one billing event (≈ 20 credits)** when all its modules have run; new accounts start with ≈ 100 free credits | Deduction is capped at zero and **never blocks** generation (same behaviour as the web app) |
+| Expert chat usage | per-app daily compute budget + per-account daily round cap | rejected with `round-limit:` in the message; try again the next day |
 
 ### Raw `POST /api/v1/mcp/exec` whitelist
 
@@ -636,6 +678,7 @@ visible `400 Unknown option …` (never a silent success, thanks to the false-su
 | ✔ | `report page remove --name "…"` (name→id resolution moved server-side, so raw exec benefits too) |
 | ✔ | `expert config --enable true\|false` (fall back to `expert set --property enable` on an old server) |
 | ✔ | `smart plan --dimensions / --app-name`, `smart execute --plan-file` (`--plan-b64` transport) |
+| ✔ | `usage` / MCP `formlm_usage` fields (`tenantType/credit/appUsage/appLimit` on `GET /api/v1/mcp/auth/me`) — degrades to `n/a` on an older server |
 
 ---
 
