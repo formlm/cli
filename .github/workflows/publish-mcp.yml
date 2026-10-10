@@ -50,4 +50,13 @@ jobs:
         run: ./mcp-publisher login dns --domain formlm.me --private-key "${{ secrets.MCP_PRIVATE_KEY }}"
 
       - name: Publish server to MCP Registry
-        run: ./mcp-publisher publish
+        run: |
+          set +e
+          OUTPUT=$(./mcp-publisher publish 2>&1)
+          CODE=$?
+          echo "$OUTPUT"
+          if [ $CODE -ne 0 ] && echo "$OUTPUT" | grep -q "cannot publish duplicate version"; then
+            echo "::notice::version already registered - idempotent re-run, treating as success"
+            exit 0
+          fi
+          exit $CODE
