@@ -5,6 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@formlm/cli)](https://www.npmjs.com/package/@formlm/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+[![MCP Registry](https://img.shields.io/badge/Official%20MCP%20Registry-me.formlm%2Fcli-blue)](https://registry.modelcontextprotocol.io/)
 
 **Keywords**: FormLM CLI, MCP Server, AI Agent form builder, form automation, assessment platform CLI, Claude MCP, Cursor MCP, AI-powered forms, formlm-cli, npm CLI tool
 
@@ -17,6 +18,8 @@
 With `formlm-cli`, you can control FormLM directly from your terminal or plug it into any AI Agent (Claude, Cursor, GPT, etc.) as an **MCP Server** — no UI needed.
 
 > Visit the official website: **[https://formlm.me](https://formlm.me)**
+>
+> `formlm-cli` is listed in the **official MCP Registry** as [`me.formlm/cli`](https://registry.modelcontextprotocol.io/) — search "formlm" in any MCP-capable client (Claude Desktop, Cursor, VS Code Copilot, Codex CLI) to install it.
 
 ---
 
