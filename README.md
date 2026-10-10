@@ -6,6 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 [![MCP Registry](https://img.shields.io/badge/Official%20MCP%20Registry-me.formlm%2Fcli-blue)](https://registry.modelcontextprotocol.io/)
+[![smithery badge](https://smithery.ai/badge/formlm/cli)](https://smithery.ai/servers/formlm/cli)
 
 **Keywords**: FormLM CLI, MCP Server, AI Agent form builder, form automation, assessment platform CLI, Claude MCP, Cursor MCP, AI-powered forms, formlm-cli, npm CLI tool
 
@@ -694,6 +695,7 @@ visible `400 Unknown option …` (never a silent success, thanks to the false-su
 - **Platform**: Sign up and start building at [formlm.me](https://formlm.me)
 - **GitHub**: [https://github.com/formlm/cli](https://github.com/formlm/cli)
 - **npm**: [https://www.npmjs.com/package/@formlm/cli](https://www.npmjs.com/package/@formlm/cli)
+- **Smithery**: [https://smithery.ai/servers/formlm/cli](https://smithery.ai/servers/formlm/cli)
 
 ---
 
