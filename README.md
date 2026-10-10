@@ -23,6 +23,12 @@ With `formlm-cli`, you can control FormLM directly from your terminal or plug it
 
 ---
 
+## What's New in v0.5.4
+
+Structured output everywhere: all **10 MCP tools now declare an `outputSchema`** and return machine-checkable `structuredContent` on every call path (success, partial and error) — `auth_login` ({ok, message, user}), `auth_email_code` ({stage: captcha|sent|failed}), `formlm_generate` ({ok, appId, planType, tasks[]}), `formlm_execute` ({ok, taskStatus, shareToken, shareUrl, builderUrl, dataUrl, accessType}) and `formlm_exec` ({ok, code, message, data}). Batch consumers and directory quality scanners can rely on fields instead of prose.
+
+---
+
 ## What's New in v0.5.3
 
 Tool-metadata quality for MCP directories and safer agent UX:

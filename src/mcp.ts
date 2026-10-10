@@ -159,6 +159,11 @@ export async function startMcpServer(): Promise<void> {
     code: z.string().optional().describe('Email verification code (6 digits, valid 5 min) — request it via auth_email_code first'),
     password: z.string().optional().describe('Account password (use together with email; verification-code/Google accounts have no password)'),
     },
+    outputSchema: {
+      ok: z.boolean(),
+      message: z.string(),
+      user: z.string().optional(),
+    },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (params) => {
     if (params.token) {
@@ -166,35 +171,44 @@ export async function startMcpServer(): Promise<void> {
       const result = await authMe();
       if (result.code === 0) {
         const userInfo = typeof result.data === 'object' ? (result.data as any).userName : result.data;
-        return { content: [{ type: 'text' as const, text: `✅ Login successful! User: ${userInfo}` }] };
+        const text = `✅ Login successful! User: ${userInfo}`;
+        return { content: [{ type: 'text' as const, text }], structuredContent: { ok: true, message: text, user: String(userInfo ?? '') } };
       }
-      return { content: [{ type: 'text' as const, text: `⚠️ Token saved but verification failed: ${result.message}` }] };
+      const warnText = `⚠️ Token saved but verification failed: ${result.message}`;
+      return { content: [{ type: 'text' as const, text: warnText }], structuredContent: { ok: false, message: warnText } };
     }
     if (params.email && params.code) {
       const result = await authLoginCode(params.email, params.code);
       if (result.code === 0 && result.data) {
         const token = typeof result.data === 'string' ? result.data : (result.data as any).token || '';
         addProfile({ name: 'default', url: getBaseUrl(), token, active: true });
-        return { content: [{ type: 'text' as const, text: '✅ Login successful!' }] };
+        const text = '✅ Login successful!';
+        return { content: [{ type: 'text' as const, text }], structuredContent: { ok: true, message: text } };
       }
       if (result.code === 403) {
-        return { content: [{ type: 'text' as const, text: '❌ Invalid or expired verification code. The code is valid for 5 minutes — ask the user to double-check it and retry. If it expired, call auth_email_code again (new captcha → new code). If the account reports 429, it is locked for 30 minutes after 5 failed attempts — wait and retry later.' }] };
+        const text = '❌ Invalid or expired verification code. The code is valid for 5 minutes — ask the user to double-check it and retry. If it expired, call auth_email_code again (new captcha → new code). If the account reports 429, it is locked for 30 minutes after 5 failed attempts — wait and retry later.';
+        return { content: [{ type: 'text' as const, text }], structuredContent: { ok: false, message: text } };
       }
       if (result.code === 429) {
-        return { content: [{ type: 'text' as const, text: '❌ Too many attempts — rate limited. Wait a minute, then request a fresh code via auth_email_code.' }] };
+        const text = '❌ Too many attempts — rate limited. Wait a minute, then request a fresh code via auth_email_code.';
+        return { content: [{ type: 'text' as const, text }], structuredContent: { ok: false, message: text } };
       }
-      return { content: [{ type: 'text' as const, text: `❌ Login failed: ${result.message}` }] };
+      const failText = `❌ Login failed: ${result.message}`;
+      return { content: [{ type: 'text' as const, text: failText }], structuredContent: { ok: false, message: failText } };
     }
     if (params.email && params.password) {
       const result = await authLogin(params.email, params.password);
       if (result.code === 0 && result.data) {
         const token = typeof result.data === 'string' ? result.data : (result.data as any).token || '';
         addProfile({ name: 'default', url: getBaseUrl(), token, active: true });
-        return { content: [{ type: 'text' as const, text: '✅ Login successful!' }] };
+        const text = '✅ Login successful!';
+        return { content: [{ type: 'text' as const, text }], structuredContent: { ok: true, message: text } };
       }
-      return { content: [{ type: 'text' as const, text: `❌ Login failed: ${result.message}\nHint: accounts registered via email verification code or Google have no password. Use the token method (Account Settings → Access Token) or email verification code (auth_email_code) instead.` }] };
+      const pwText = `❌ Login failed: ${result.message}\nHint: accounts registered via email verification code or Google have no password. Use the token method (Account Settings → Access Token) or email verification code (auth_email_code) instead.`;
+      return { content: [{ type: 'text' as const, text: pwText }], structuredContent: { ok: false, message: pwText } };
     }
-    return { content: [{ type: 'text' as const, text: '❌ Provide `token`, or `email` + `code`, or `email` + `password`. Recommended: ask the user for the Access Token (formlm.me → Workspace → Account Settings), or start an email verification-code login via auth_email_code.' }] };
+    const needText = '❌ Provide `token`, or `email` + `code`, or `email` + `password`. Recommended: ask the user for the Access Token (formlm.me → Workspace → Account Settings), or start an email verification-code login via auth_email_code.';
+    return { content: [{ type: 'text' as const, text: needText }], structuredContent: { ok: false, message: needText } };
   });
 
   server.registerTool('auth_email_code', {
@@ -215,6 +229,10 @@ export async function startMcpServer(): Promise<void> {
     email: z.string().describe('Account email (the verification code will be sent here)'),
     captcha: z.string().optional().describe('The 4 digits the user read from the captcha image (omit on first call to get the image)'),
     },
+    outputSchema: {
+      stage: z.enum(['captcha', 'sent', 'failed']),
+      message: z.string(),
+    },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   }, async (params) => {
     if (!params.captcha) {
@@ -233,19 +251,23 @@ export async function startMcpServer(): Promise<void> {
           text: '👆 Captcha image (valid 60s). Show it to the user and ask them to read the 4 digits, then call auth_email_code again with { email, captcha }. If this client cannot display images, run `formlm-cli auth login` in a terminal instead (option 2 saves the image to ~/.formlm/captcha.gif and opens it).',
         },
       ];
-      return { content };
+      return { content, structuredContent: { stage: 'captcha' as const, message: 'Captcha image issued — ask the user to read the 4 digits.' } };
     }
     const send = await authSendEmailCode(params.email, params.captcha);
     if (send.code === 200) {
-      return { content: [{ type: 'text' as const, text: `✅ Verification code sent to ${params.email}. Ask the user to check their inbox (and spam folder) and give you the 6-digit code (valid 5 minutes), then call auth_login with { email, code }.` }] };
+      const text = `✅ Verification code sent to ${params.email}. Ask the user to check their inbox (and spam folder) and give you the 6-digit code (valid 5 minutes), then call auth_login with { email, code }.`;
+      return { content: [{ type: 'text' as const, text }], structuredContent: { stage: 'sent' as const, message: text } };
     }
     if (send.code === 403) {
-      return { content: [{ type: 'text' as const, text: '❌ Wrong captcha digits. Call auth_email_code again WITHOUT captcha to get a fresh image, and ask the user to read it once more.' }] };
+      const text = '❌ Wrong captcha digits. Call auth_email_code again WITHOUT captcha to get a fresh image, and ask the user to read it once more.';
+      return { content: [{ type: 'text' as const, text }], structuredContent: { stage: 'failed' as const, message: text } };
     }
     if (send.code === 429) {
-      return { content: [{ type: 'text' as const, text: '❌ Rate limited (1 send per email per 60s, 10 per IP per minute). Ask the user to wait a minute, then request a fresh captcha image.' }] };
+      const text = '❌ Rate limited (1 send per email per 60s, 10 per IP per minute). Ask the user to wait a minute, then request a fresh captcha image.';
+      return { content: [{ type: 'text' as const, text }], structuredContent: { stage: 'failed' as const, message: text } };
     }
-    return { content: [{ type: 'text' as const, text: `❌ Failed to send code: ${send.message}` }] };
+    const failText = `❌ Failed to send code: ${send.message}`;
+    return { content: [{ type: 'text' as const, text: failText }], structuredContent: { stage: 'failed' as const, message: failText } };
   });
 
   server.registerTool('auth_status', {
@@ -439,6 +461,14 @@ export async function startMcpServer(): Promise<void> {
       'Default: server default (Simplified Chinese).'
     ),
     },
+    outputSchema: {
+      ok: z.boolean(),
+      message: z.string(),
+      appId: z.string().optional(),
+      planType: z.string().optional(),
+      appName: z.string().optional(),
+      tasks: z.array(z.object({ seq: z.number(), skill: z.string(), title: z.string() })).optional(),
+    },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   }, async (params) => {
     let cmd = `assess smart plan --input "${escapeArg(params.input)}"`;
@@ -451,7 +481,19 @@ export async function startMcpServer(): Promise<void> {
     cmd += ' --json';
     const r = await execCommand(cmd, undefined, TIMEOUT_PLAN);
     const text = formatGenerateResult(r);
-    return { content: [{ type: 'text' as const, text }] };
+    const sc: Record<string, any> = { ok: r.code === 0, message: text };
+    if (r.code === 0 && typeof r.data === 'string') {
+      try {
+        const p = JSON.parse(r.data);
+        if (p && p.appId) {
+          sc.appId = String(p.appId);
+          if (p.planType) sc.planType = String(p.planType);
+          if (p.name) sc.appName = String(p.name);
+          if (Array.isArray(p.tasks)) sc.tasks = p.tasks.map((t: any) => ({ seq: Number(t.seq), skill: String(t.skill), title: String(t.title) }));
+        }
+      } catch { /* text-only fallback */ }
+    }
+    return { content: [{ type: 'text' as const, text }], structuredContent: sc };
   });
 
   // ── Tier 1b: Smart Execute (Single Module) ──────────────────────
@@ -487,6 +529,18 @@ export async function startMcpServer(): Promise<void> {
     module: z.string().describe('Module to execute: form / scale / connect / report / expert / share'),
     plan: z.string().optional().describe('Full plan JSON (optional — the plan is cached server-side for ~10 min after formlm_generate; pass this only to resume after the cache expired)'),
     },
+    outputSchema: {
+      ok: z.boolean(),
+      message: z.string(),
+      appId: z.string(),
+      module: z.string(),
+      taskStatus: z.string().optional(),
+      shareToken: z.string().optional(),
+      shareUrl: z.string().optional(),
+      builderUrl: z.string().optional(),
+      dataUrl: z.string().optional(),
+      accessType: z.string().optional(),
+    },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   }, async (params) => {
     let cmd = `assess smart execute --app ${params.appId} --module ${params.module}`;
@@ -497,22 +551,26 @@ export async function startMcpServer(): Promise<void> {
       try {
         cmd += ` --plan-b64 ${Buffer.from(JSON.stringify(JSON.parse(params.plan)), 'utf-8').toString('base64')}`;
       } catch {
-        return { content: [{ type: 'text' as const, text: '❌ `plan` is not valid JSON — pass the full plan object returned by formlm_generate (its "plan" field).' }] };
+        return { content: [{ type: 'text' as const, text: '❌ `plan` is not valid JSON — pass the full plan object returned by formlm_generate (its "plan" field).' }], structuredContent: { ok: false, message: '❌ `plan` is not valid JSON — pass the full plan object returned by formlm_generate (its "plan" field).', appId: params.appId, module: params.module } };
       }
     }
     cmd += ' --json';
     const r = await execCommand(cmd, undefined, TIMEOUT_EXECUTE);
 
     if (r.code !== 0) {
-      return { content: [{ type: 'text' as const, text: `❌ [${r.code}] ${r.message}` }] };
+      const errText = `❌ [${r.code}] ${r.message}`;
+      return { content: [{ type: 'text' as const, text: errText }], structuredContent: { ok: false, message: errText, appId: params.appId, module: params.module } };
     }
 
     const raw = r.data || r.message;
     let text: string;
+    const sc: Record<string, any> = { ok: false, message: '', appId: params.appId, module: params.module };
     try {
       const parsed = JSON.parse(raw);
       const lines: string[] = [];
       const status = parsed.taskStatus || 'unknown';
+      sc.taskStatus = status;
+      sc.ok = status !== 'error';
 
       if (status === 'error') {
         lines.push(`❌ Module '${params.module}' failed (status: error)`);
@@ -533,9 +591,11 @@ export async function startMcpServer(): Promise<void> {
             // shareToken is a first-class field server-side; fall back to URL extraction for older servers
             const token = urls.shareToken || shareTokenFromUrl(urls.shareUrl);
             if (token) lines.push(`🔑 ShareToken:   ${token}`);
-            if (urls.shareType) lines.push(`🌐 Access type:  ${urls.shareType}${urls.shareDay >= 3650000 ? ' (permanent)' : ''}${urls.shareType === 'all' ? ' — requires login!' : ''}`);
-            if (urls.builderUrl) lines.push(`🎨 Editor URL: ${urls.builderUrl}`);
-            if (urls.dataUrl) lines.push(`📊 Data URL: ${urls.dataUrl}`);
+            if (token) sc.shareToken = String(token);
+            if (urls.shareType) { lines.push(`🌐 Access type:  ${urls.shareType}${urls.shareDay >= 3650000 ? ' (permanent)' : ''}${urls.shareType === 'all' ? ' — requires login!' : ''}`); sc.accessType = String(urls.shareType); }
+            if (urls.shareUrlAbsolute || urls.shareUrl) sc.shareUrl = String(urls.shareUrlAbsolute || urls.shareUrl);
+            if (urls.builderUrl) { lines.push(`🎨 Editor URL: ${urls.builderUrl}`); sc.builderUrl = String(urls.builderUrl); }
+            if (urls.dataUrl) { lines.push(`📊 Data URL: ${urls.dataUrl}`); sc.dataUrl = String(urls.dataUrl); }
             lines.push('');
             lines.push(`App ID: ${params.appId}`);
           } catch {
@@ -556,9 +616,11 @@ export async function startMcpServer(): Promise<void> {
       text = lines.join('\n');
     } catch {
       text = raw || r.message;
+      sc.taskStatus = 'unknown';
+      sc.ok = true;
     }
-
-    return { content: [{ type: 'text' as const, text }] };
+    sc.message = text;
+    return { content: [{ type: 'text' as const, text }], structuredContent: sc };
   });
 
   // ── Tier 2: State & Knowledge ────────────────────────────────────
@@ -820,6 +882,12 @@ export async function startMcpServer(): Promise<void> {
       'Add --json flag for structured output. Escape inner quotes with \\".'
     ),
     },
+    outputSchema: {
+      ok: z.boolean(),
+      code: z.number(),
+      message: z.string(),
+      data: z.unknown(),
+    },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, async (params) => {
     // Defense-in-depth: enforce the documented whitelisted command prefixes
@@ -828,11 +896,10 @@ export async function startMcpServer(): Promise<void> {
     const head = params.command.trim().split(/\s+/).slice(0, 2).join(' ');
     const allowedPrefixes = ['assess app', 'assess form', 'assess scale', 'assess connect', 'assess report', 'assess expert', 'assess share', 'assess smart', 'assess skill'];
     if (!allowedPrefixes.includes(head)) {
+      const rejText = `❌ Command must start with one of the whitelisted prefixes (assess app/form/scale/connect/report/expert/share/smart/skill). Got: "${params.command.substring(0, 80)}"`;
       return {
-        content: [{
-          type: 'text' as const,
-          text: `❌ Command must start with one of the whitelisted prefixes (assess app/form/scale/connect/report/expert/share/smart/skill). Got: "${params.command.substring(0, 80)}"`,
-        }],
+        content: [{ type: 'text' as const, text: rejText }],
+        structuredContent: { ok: false, code: 403, message: rejText, data: null },
       };
     }
     // Use longer timeout for commands that trigger server-side AI generation
@@ -841,7 +908,10 @@ export async function startMcpServer(): Promise<void> {
     const isSmartExecute = params.command.includes('smart execute');
     const timeout = isStyleCmd ? TIMEOUT_STYLE : isSmartExecute ? TIMEOUT_EXECUTE : isSmartPlan ? TIMEOUT_PLAN : TIMEOUT_DEFAULT;
     const r = await execCommand(params.command, undefined, timeout);
-    return { content: [{ type: 'text' as const, text: toText(r) }] };
+    return {
+      content: [{ type: 'text' as const, text: toText(r) }],
+      structuredContent: { ok: r.code === 0, code: r.code, message: r.message, data: r.data ?? null },
+    };
   });
 
   // ── Start Server ──────────────────────────────────────────────────

@@ -3,7 +3,7 @@
   "name": "me.formlm/cli",
   "title": "FormLM",
   "description": "Build AI-powered forms, scored assessments and professional reports on FormLM, by natural language.",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "repository": {
     "url": "https://github.com/formlm/cli",
     "source": "github"
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "@formlm/cli",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
