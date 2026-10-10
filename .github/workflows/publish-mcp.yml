@@ -1,0 +1,53 @@
+name: Publish to MCP Registry
+
+# Flow: npm publish stays local (see repo README); push a v<x.y.z> tag AFTER it
+# and this workflow syncs server.json to that version, verifies the npm package
+# is live with the matching mcpName, and publishes to the official registry.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Sync version into server.json
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="$(jq -r .version server.json)"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
+          jq -r '"publishing me.formlm/cli v" + .version' server.json
+
+      - name: Wait for npm package with matching mcpName
+        run: |
+          for i in $(seq 1 24); do
+            MCP_NAME="$(curl -s "https://registry.npmjs.org/@formlm%2Fcli/$VERSION" | jq -r '.mcpName // empty')"
+            if [ "$MCP_NAME" = "me.formlm/cli" ]; then
+              echo "npm @formlm/cli@$VERSION is live and carries the matching mcpName"
+              exit 0
+            fi
+            echo "attempt $i: npm @formlm/cli@$VERSION not ready yet (mcpName='$MCP_NAME'), retry in 15s"
+            sleep 15
+          done
+          echo "ERROR: npm package @formlm/cli@$VERSION with mcpName=me.formlm/cli not found - run the npm release first" >&2
+          exit 1
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login dns --domain formlm.me --private-key "${{ secrets.MCP_PRIVATE_KEY }}"
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish
